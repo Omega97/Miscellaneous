@@ -14,6 +14,14 @@ add_mul_rule('A', 'A', -1)
 from copy import deepcopy
 import numpy as np
 
+from omar_utils.basic.plots import matrix_to_heatmap2
+from numpy import arange
+from omar_utils.tests.timer import Timer
+import matplotlib.pyplot as plt
+from math import factorial as fact
+# from math import log as ln_
+from math import pi
+
 
 class Group:
 
@@ -221,9 +229,7 @@ def item(name: str, value=1.) -> Group:
     return Group({name_: value})
 
 
-if __name__ == '__main__':
-
-    from math import factorial as fact
+def test_1():
 
     A = item('A')
     add_mul_rule('A', 'A', -1)
@@ -244,17 +250,79 @@ if __name__ == '__main__':
 
     assert cos(A) ** 2 + sin(A) ** 2
 
+
+def test_2():
+    A = item('A')
+    add_mul_rule('A', 'A', -1)
     # print(2 + 2 * A)
     # print(1 + 1.2 * A)
     # print(0 + A)
     # print(-1 + A)
-
     # print((5 + 2 * A)/(3 + 4 * A))
 
-    # A = item('A')
-    # B = item('B')
-    # add_mul_rule('A', 'A', B)
-    # add_mul_rule('A', 'B', -1)
-    # add_mul_rule('B', 'B', -A)
-    #
-    # print(A / (A + B + 1))
+
+
+    def ln(x, pre=10):
+        # if abs(x-1) <= 1:
+        #     y = sum([(-1) ** i * (x - 1) ** (i + 1) / (i + 1) for i in range(pre)])
+        #     return y if y else 0.
+        # else:
+        #     return -ln(1+1/(x-1))
+        if abs(x-1) <= 1:
+            return sum([(-1) ** i * (x - 1) ** (i + 1) / (i + 1) for i in range(pre)])
+        else:
+            return 0
+
+
+    def exp(x, pre=10):
+        y = sum([x ** i / fact(i) for i in range(pre)])
+        return y if y else 0
+
+    print(ln(2.71828))
+    print(ln(1/2.71828))
+    print(ln(2 - 2 * A))   # 1.03972 + 2.35619 A
+    print(ln(.5 - .5 * A))     # -0.346574 + 2.35619 A
+
+
+def test_3():
+    A = item('A')
+    B = item('B')
+    add_mul_rule('A', 'A', B)
+    add_mul_rule('A', 'B', -1)
+    add_mul_rule('B', 'B', -A)
+
+    print(A / (A + B + 1))
+
+
+def test_4():
+    timer = Timer()
+
+    A = item('A')
+    add_mul_rule('A', 'A', A)
+
+    dx = 2**-5
+    r = 2
+    X = arange(-r, +r + dx, dx)
+    Y = arange(-r, +r + dx, dx)
+
+
+    def f(x, pre=10):
+        # y = sum([(-1) ** i * x ** (2 * i + 1) / fact(2 * i + 1) for i in range(pre)])
+        # return abs(y)
+        y = 1/x if x else 0
+        return abs(y) if y else 0
+
+    timer('prep')
+    V = [[float(y) + A * float(x) for y in Y] for x in X]
+    timer('init')
+
+    V = [[f(z) for z in i] for i in V]
+    timer('gen')
+    matrix_to_heatmap2(V, show=False, interpolation='bicubic', cmap='hot', z_range=[0, 5])  # , z_range=[0, 5]
+    timer('map')
+    plt.show()
+
+
+if __name__ == '__main__':
+    # test_2()
+    test_4()
