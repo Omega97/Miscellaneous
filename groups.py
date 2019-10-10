@@ -1,5 +1,8 @@
 """     Generalized groups
 
+Complex numbers are just a system where A^2 = -1 and A is linearly independent from 1
+What if you could define such systems on your own?
+
 1) create an item
 A = item('A')
 
