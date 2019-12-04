@@ -5,10 +5,10 @@ Simple Api template + example
 
 class ApiTemplate:
     """use this template to generate your Api class"""
-    def __init__(self, do_report=True):
+    def __init__(self):     # note: for sake of simplicity __init__ should avoid having args/kwargs
         self.routine = None     # generator of methods that are called one by one during runtime
-        self.set_routine(self.routine_list())
-        self.do_report = do_report
+        self.do_report = True
+        self.report('Api initialized')
 
     def report(self, message: str):
         if self.do_report:
@@ -26,8 +26,20 @@ class ApiTemplate:
 
     def __enter__(self):
         # check that routine is defined
-        if not hasattr(self.routine, '__iter__'):
-            raise RuntimeError("Please specify API's routine first via self.set_routine(...)")
+        routine = self.routine_list()
+        self.report('initializing routine')
+
+        # assert routine_list(self) has been properly implemented
+        if not hasattr(routine, '__iter__'):
+            raise TypeError(f'{type(routine).__name__} object is not iterable; '
+                            f'routine_list must return an iterable')
+        for task in routine:
+            if not hasattr(task, '__call__'):
+                raise TypeError(f'{type(task).__name__} object is not callable; '
+                                f'routine_list must return a list of methods')
+
+        self.set_routine(routine)
+
         self.report('running Api')
         return self.enter()
 
@@ -37,10 +49,12 @@ class ApiTemplate:
         else:
             self.report(f'Api interrupted by {exc_type.__name__}')
         self.exit()
+        self.report('Api successfully shut down')
 
     # --- Routine ----------------------------------------------------------------
 
     def routine_list(self):
+        """:return list of methods to execute by the Api"""
         raise NotImplementedError
 
     def set_routine(self, routine: list):
@@ -59,21 +73,26 @@ class ApiTemplate:
         for task in self.routine:
             task()
 
-    def __call__(self, *args, **kwargs):
-        """calls next method in routine"""
+    def __next__(self):
+        """execute next task in routine"""
         try:
             task = API.routine.__next__()
             task()
         except StopIteration:
             pass
 
+    # ---- Setters ----------------------------------------------------------------
+
+    def toggle_report(self, b: bool):
+        self.do_report = b
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 
 
 class Api(ApiTemplate):
-    def __init__(self, x=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, x=None):
+        super().__init__()
         self.x = x
 
     # --- Context Manager ----------------------------------------------------------------
@@ -89,15 +108,15 @@ class Api(ApiTemplate):
 
     def task_1(self):
         """dummy task 1"""
-        print(f'1) {self.x}\n')
+        print(f'\t1) {self.x}\n')
 
     def task_2(self):
         """dummy task 2"""
-        print(f'2) {self.x}\n')
+        print(f'\t2) {self.x}\n')
 
     def task_3(self):
         """dummy task 3"""
-        print(f'3) {self.x}\n')
+        print(f'\t3) {self.x}\n')
 
     # ---- Routine ----------------------------------------------------------------
 
@@ -115,3 +134,4 @@ if __name__ == '__main__':
 
     with Api('sample') as API:
         API.run()
+        # next(API)
