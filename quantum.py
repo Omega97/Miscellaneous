@@ -1,3 +1,4 @@
+"""find the emission spectrum of a quantum system, provided potential V(x)"""
 import numpy as np
 from omar_utils import *
 import matplotlib.pyplot as plt
