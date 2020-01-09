@@ -1,3 +1,4 @@
+"""simulates a quantum particle's distribution over time in an 1D box"""
 from math import *
 from __misc__.animated_plot import *
 
