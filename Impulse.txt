@@ -1,0 +1,6565 @@
+(* 25/06/15 09:26 *)
+{
+                                    IMPULSE
+}
+
+
+
+program Impulse;   // Build 102
+
+
+
+uses
+   Crt,Dos,Graph,Windows,SysUtils;
+
+
+
+type
+cell=record
+
+alive:boolean;      //viva
+cx:real;            //coo
+cy:real;            //coo
+lcx:real;           //last coo
+lcy:real;           //last coo
+vx:real;            //vet x
+vy:real;            //    y
+lvx:real;           //last vet x
+lvy:real;           //         y
+vel:real;           //speed
+dir:single;         //direction
+m:real;             //massa
+q:real;             //carica
+com:string;         //comandi
+res:single;         //restitution (0-->1 : 0=plastic bounce, 1=elastic bounce)
+side:byte;          //numero sezione (funzionale, da usera eni comandi)
+col1:byte;          //color (1-16)   side color    / selection / impulse
+col2:byte;          //color (1-16)   default color
+imp:boolean;        //impulse, true if charged
+slc:boolean;        //selected
+end;
+
+
+
+label
+    reStartImpulse,gotoHome,gotoPlay,chiudiProgramma,skipShot,NoShot;
+
+
+
+const
+    D=5000;                                                                     // numero di cellule
+    ScrMax=2048;                                                                // max space reserved for the screen, not necessarly full
+    Smem=100;                                                                   // numero di stringhe nel vettore strMemo (salva comandi)
+    Version='Impulse - Life Developement Environment - v=release_1.0.2 - 2015 - by Omar Cusma Fait';
+    DayStr:array[0..6] of string[3]=('Dom','Lun','Mar','Mer','Gio','Ven','Sab');
+    MonthStr:array[1..12] of string[3]=('Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic');
+
+
+
+var
+    //basic+graph                                                               ---
+    GraphicsDriver,GraphicsMode,ErrCode:smallint;                               // graphic var
+    pressed:boolean;                                                            // keypressed
+
+    //screen                                                                    ---
+    DscrX,DscrY,frame,particlePx:integer;                                       //Dimensioni X e Y,zoom, num observed cell, frame/s, numero di pixel per disegnare una particella, densità griglia
+    sx,sy:real;                                                                 // observ poin x/y
+    zoom:real;                                                                  // zoom: min(DcsrXY)=zoom units on the grid
+    Screen:array[1..ScrMax,1..ScrMax,0..1]of byte;                              // array SCREEN
+    ConsoleScr:integer;                                                         // dim x of console
+
+    //command                                                                   ---
+    Ccom:char;                                                                  // char command (da barra)
+    Scom:shortstring;                                                           // string command (da barra)
+    HelpType:shortint;                                                          // 0=base / 1=cons / 2=user / 3=part
+    lastPath:string;                                                            // last \exe "path"  for   \reexe
+
+    //moovement                                                                 ---
+    T:real;                                                                     // time
+    pausa:boolean;                                                              // ferma il calcolo
+    hh,mm,ss,cs:word;                                                           // time
+    followed:integer;                                                           // follow that particle
+
+    //textures                                                                  ---
+    Ntexture,Npointer:integer;                                                  // numero di serie di texture utilizzata: 0=vanilla (carchi), 1=bunti bordo, 2=nuvola di punti
+
+    //calcoli                                                                   ---
+    CalcFreq:integer;                                                           // numero di intervalli calcolati in un secondo
+    frameTime:real;                                                             // quanto tempo è stato calcolatro tra 2 frame
+    Prec:real;                                                                  // precisione di calcolo
+
+    //time                                                                      ---
+    T0:real;                                                                    // tempo minimo per il calcolo (attimo)
+    Tempo:array[1..4,-1..8]of word;                                             // tempo (hh,mm,ss,cs)       -1 & 0 reserved for timePass
+    Year,Month,Day,WDay:word;                                                   // anno, mese, giorno, giorno str
+
+    //file                                                                      ---
+    fl:text;                                                                    // file
+    path:string;                                                                // percorso
+    percorso,percAux:string;                                                    // percorso database, percorso ausiliario per installazione alternativa
+
+    //arrays                                                                    ---
+    V:array[1..D]of cell;                                                       // tutte le particelle (unità)
+    strData:array[1..Smem]of string;                                            // memo strings for commands
+    freq:array[1..100]of integer;                                               // graf values
+
+    //parametri universali                                                      ---
+    G:real;                                                                     // costante gravitazionale
+    Qconst:real;                                                                // costante magnetica
+    Attrito:real;                                                               // "attrito dello spazio"     1=min 0=max
+
+    //boolean                                                                   ---
+    Bgravy:boolean;                                                             // gravity on/off
+    Bcharge:boolean;                                                            // magnet on/off
+    Burti:boolean;                                                              // collisions on/off
+    BnoShowMode:boolean;                                                        // no output when exe a world
+    BpictureMode:boolean;                                                       // allow a tracer
+    DoGraf:boolean;                                                             // print graf
+
+    //area                                                                      ---
+    Ax1,Ay1,Ax2,Ay2:real;                                                       // area corners
+    AreaType:char;                                                              // "-"=none   "1" only one point selected  "2" both specified       tipo di area
+
+    //World                                                                     ---
+    WorldName:shortstring;                                                      // name of the current world
+
+
+
+
+//------------------------------------------------------------------------------ procedures & functions
+
+
+
+
+ {### SETTAGGIO ###}
+
+
+
+ //clear V[i]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       Omar Cusma Fait VALS 2015
+procedure VetClrI(i:integer);
+begin
+with V[i] do
+     begin
+     alive:=false;
+     cx:=0;
+     cy:=0;
+     lcx:=0;
+     lcy:=0;
+     vx:=0;
+     vy:=0;
+     lvx:=0;
+     lvy:=0;
+     vel:=0;
+     dir:=0;
+     m:=1;
+     q:=0;
+     com:='';
+     res:=1;          //1=elastic bounce
+     side:=0;
+     col1:=15;         //15=white
+     col2:=15;
+     imp:=false;
+     slc:=false;
+     end;
+end;
+
+
+
+ //clear Screen array
+procedure clrScreen(n:integer);
+var
+   i,j:integer;
+begin
+for i:=1 to ScrMax do for j:=1 to ScrMax do
+    begin
+    if (n=0) or (n=1) then
+       if Screen[i,j,0]<>0 then Screen[i,j,0]:=0;
+    if (n=0) or (n=2) then
+       if Screen[i,j,1]<>0 then Screen[i,j,1]:=0;
+    end;
+end;
+
+
+
+ //resetta vettore
+procedure VetReSet;
+var
+   i:integer;
+begin
+//array settings, clear all
+for i:=1 to D do
+   VetClrI(i);
+end;
+
+
+
+//setUp, settaggio iniziale di tutte le variabili globali (settings)
+procedure SetUp;
+var
+   i,j:integer;
+begin               //basic settings
+
+gettime(hh,mm,ss,cs);
+randomize;
+cursoroff;
+
+percorso:='C:\';
+percAux:='C:\';
+path:='';
+lastPath:='';
+
+T:=0;
+T0:=0.1;//
+
+Qconst:=1;
+frameTime:=0;
+SetColor(10);
+Ccom:=chr(0);
+Scom:='';
+pausa:=true;
+pressed:=false;
+ConsoleScr:=78;
+followed:=0;
+
+sx:=0;
+sy:=0;
+
+Prec:=0.01; 
+frame:=0;
+DoGraf:=false;
+
+AreaType:='-';
+Ax1:=0;
+Ay1:=0;
+Ax2:=0;
+Ay2:=0;
+
+ //boolean set
+Bgravy:=true;
+Bcharge:=true;
+Burti:=true;
+BnoShowMode:=false;
+BpictureMode:=false;
+
+
+gettime(tempo[1,-1],tempo[2,-1],tempo[3,-1],tempo[4,-1]);
+gettime(tempo[1,0],tempo[2,0],tempo[3,0],tempo[4,0]);
+
+particlePX:=1;
+
+Ntexture:=0;
+
+zoom:=64;
+
+Ax1:=0;
+Ay1:=0;
+Ax2:=0;
+Ay2:=0;
+
+VetReSet;
+
+clrScreen(0);
+
+//console
+textcolor(11);
+gotoxy((ConsoleScr-length('Impulse - console')) div 2,4);
+write('Impulse - console');
+textcolor(3);
+gotoxy((ConsoleScr-length('Impulse - console')) div 2,5);
+write('Impulse - console');
+
+for i:=1 to 4 do for j:=1 to 8 do
+    Tempo[i,j]:=0;
+
+// add defoult memo data
+for i:=1 to Smem do
+   strData[i]:='';
+
+//1 =blank
+strData[2]:='{';
+strData[3]:='}';
+strData[4]:='{goto(';
+strData[5]:='{follow(';
+strData[6]:='{side(';
+strData[7]:='{escape(';
+strData[8]:='{clone(';
+strData[9]:='{kill(';
+strData[10]:='{random(';
+
+end;
+
+
+
+
+ {### Report ###}
+
+
+
+ //report                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 O m a r   C u s m a   F a i t
+procedure report(s:string);
+var
+   fl:text;
+begin
+if percorso='' then percorso:='C:\';
+{$I-}
+if ioresult=0 then
+   begin
+   assign(fl,percorso+'Impulse\report.txt');
+   append(fl);
+   writeln(fl,s);
+   close(fl);
+   end;
+{$I+}
+end;
+
+
+
+ //report dell'ultimo evento
+procedure reportEvent(s:string);
+var
+   fl:text;
+begin
+if percorso='' then percorso:='C:\';
+   assign(fl,percorso+'Impulse\last_event.txt');
+   rewrite(fl);
+   writeln(fl,s);
+   close(fl);
+
+end;
+
+
+
+//report a void line
+procedure reportln;
+var
+   fl:text;
+begin
+{$I-}
+if ioresult=0 then
+   begin
+   assign(fl,percorso+'Impulse\report.txt');
+   append(fl);
+   writeln(fl,'');
+   close(fl);
+   end;
+{$I+}
+end;
+
+
+
+//funzione per report del tempo
+function ora:string;
+var
+s:shortstring;
+hh,mm,ss,cs:word;
+begin
+ora:='';
+gettime(hh,mm,ss,cs);
+str(hh,s);
+if hh<10 then s:='0'+s;
+ora:=s+'_';
+str(mm,s);
+if mm<10 then s:='0'+s;
+ora:=ora+s+'_';
+str(ss,s);
+if ss<10 then s:='0'+s;
+ora:=ora+s+'_';
+str(cs,s);
+if cs<10 then s:='0'+s;
+ora:=ora+s;
+end;
+
+
+
+ //un primo report, comunica titolo, ora ecc.
+procedure firstReport;
+begin
+{assign(fl,percorso+'Impulse\report.txt');
+rewrite(fl);
+close(fl);    }
+   reportln;
+   reportln;
+   report(' System :  >>                      [IMPULSE]');
+   reportln;
+   reportln;
+   report(' System :  >> [ Impulse awake from '+ora+' ]');
+   reportln;
+   reportln;
+   reportln;
+end;
+
+
+
+
+ {### Funzioni semplici ###}
+
+
+
+//leggi una variabile in quel punto, gestisci altre opzioni (enter, esc, tab, backslash);   wip
+function readHere:string;
+var
+   c:char;
+   i,x0,y0,p:integer;
+begin
+
+x0:=WhereX;
+y0:=WhereY;
+readHere:='';
+p:=0;
+
+cursoron;
+c:=chr(0);
+
+repeat
+
+gotoxy(x0+p,y0);
+c:=readkey;
+
+case ord(c) of
+13: gotoxy(x0,y0);
+8:  if (length(readHere)>0) and (p>=1)  then
+       begin
+       delete(readHere,p,1);
+       p:=p-1;
+       gotoxy(x0,y0);
+       write(readHere);
+       clreol;
+       end;
+9:  begin
+    readHere:='';
+    p:=0;
+    gotoxy(x0+p,y0);
+    clreol;
+    end;
+27: begin
+    readHere:='';
+    p:=0;
+    gotoxy(x0+p,y0);
+    clreol;
+    c:=chr(13);
+    end;
+72: write('');
+75: if p>1 then p:=p-1;
+77: if p<length(readHere) then p:=p+1;
+80: write('');
+0: write('');
+else
+   begin
+   cursoroff;
+   gotoxy(x0,y0);
+   if p=length(readHere) then
+      begin
+      readHere:=readHere+c;
+      write(readHere,' ');
+      end
+      else
+      begin
+      for i:=1 to p do write(readHere[i]);
+      write(c);
+      for i:=p+1 to length(readHere) do write(readHere[i]);
+      end;
+   clreol;
+   p:=p+1;
+   cursoron;
+   end;
+end;
+
+until
+ord(c)=13;
+
+cursoroff;
+
+
+end;
+
+
+
+ //numero di celle vive
+function NumAlive:integer;
+var i:integer;
+begin
+NumAlive:=0;
+for i:=1 to D do if V[i].alive then NumAlive:=NumAlive+1;
+end;
+
+
+
+ //prossimo spazio lebero nel vettore V
+function nextFree:integer;
+begin
+nextFree:=1;
+while V[nextFree].alive do
+   begin
+   nextFree:=nextFree+1;
+   if nextFree>D then
+      begin
+      nextFree:=0;
+      break;
+      end;
+   end;
+end;
+
+
+
+ //regola un num n tra 1 e int     n1 <= n <= n2                     (23,10)  regola=3
+function regola(n,n1,n2:integer):integer;
+begin
+regola:=n;
+if n2<n1 then
+   begin
+   n2:=n1;
+   regola:=n1;
+   end;
+while regola<n1 do regola:=regola+n2-n1+1;
+while regola>n2 do regola:=regola-n2+n1-1;
+end;
+
+
+
+ //prendi il ritaglio di una stringa tra 2 caratt (esclusi)
+function cut(stri:shortstring; c1,c2:char):shortstring;
+var
+a,b:integer;
+s:shortstring;
+begin
+
+cut:='';
+if length(stri)>0 then s:=stri else s:=' ';
+
+a:=0;
+repeat a:=a+1 until (s[a]=c1) or (a>length(s));
+b:=a;
+repeat b:=b+1 until (s[b]=c2) or (b>length(s));
+
+if (a<=length(s)) and (b<=length(s)) then
+   begin
+   delete(s,b,length(s));
+   delete(s,1,a);
+   cut:=s;
+   end;
+
+end;
+
+
+
+ //togle gli zeri finali
+function accorcia(s:shortstring):shortstring;
+var
+   i:integer;
+begin
+i:=length(s);
+if s[i]='0' then
+   repeat
+   delete(s,i,i);
+   i:=i-1;
+   until
+   s[i]<>'0';
+if s[length(s)]='.' then delete(s,length(s),length(s));
+accorcia:=s;
+end;
+
+
+
+ //funzione: numero --> stringa
+function st(num:real):shortstring;
+var
+   i:integer;
+begin
+str(num:1:15,st);
+i:=length(st);
+if st[i]='0' then
+   repeat
+   delete(st,i,i);
+   i:=i-1;
+   until
+   st[i]<>'0';
+if st[length(st)]='.' then delete(st,length(st),length(st));
+end;
+
+
+
+ //funzione stringa --> numero
+function nm(s:string):real;
+var
+   err:integer;
+begin
+nm:=0;
+val(s,nm,err);
+if err<>0 then nm:=0;
+end;
+
+
+
+//se scocca il frame allora true
+function takeTime(n:integer; tm:real):boolean;
+var
+h,m,s,c:word;
+begin
+takeTime:=false;
+gettime(h,m,s,c);
+if c-Tempo[4,n]+(s-Tempo[3,n])*100+(m-Tempo[2,n])*6000+(h-Tempo[1,n])*360000>=tm*100 then     //100 cs=1s
+    begin
+    takeTime:=true;
+    gettime(Tempo[1,n],Tempo[2,n],Tempo[3,n],Tempo[4,n]);
+    end;
+end;
+
+
+
+//tempo trascorso dall'ultima chiamata della funzione     1=0.01s
+function timePass:integer;
+begin
+gettime(tempo[1,0],tempo[2,0],tempo[3,0],tempo[4,0]);
+timePass:= (tempo[1,0]-tempo[1,-1])*100*60*60 +(tempo[2,0]-tempo[2,-1])*100*60 +(tempo[3,0]-tempo[3,-1])*100 +(tempo[4,0]-tempo[4,-1]);
+gettime(tempo[1,-1],tempo[2,-1],tempo[3,-1],tempo[4,-1]);
+end;
+
+
+
+ // distanza reale tra 2 punti
+function dist(x1,y1,x2,y2:real):real;
+begin
+dist:=sqrt(sqr(abs(x1-x2))+sqr(abs(y1-y2)));
+end;
+
+
+
+ // dist tra particelle
+function distP(p1,p2:integer):real;
+begin
+distP:=0;
+if (p1>0) and (p1<=D) and (p2>0) and (p2<=D) then
+   distP:=dist(V[p1].cx,V[p1].cy,V[p2].cx,V[p2].cy);
+end;
+
+
+
+ // calcola inclinazione di un segmento AB (arctan)
+function angTan(x1,y1,x2,y2:real):real;
+begin
+ //
+//angtan:=random*2*PI;
+angtan:=0;
+
+
+ //0°
+if (x2>x1) and (y2=y1) then
+   angTan:=0;
+
+if (x2>x1) and (y2>y1) then
+   angTan:=arctan((y2-y1)/(x2-x1));
+
+ //90°
+if (x2=x1) and (y2>y1) then
+   angTan:=PI/2;
+
+if (x2<x1) and (y2>y1) then
+   angTan:=arctan((y2-y1)/(x2-x1))+PI;
+
+ //180°
+if (x2<x1) and (y2=y1) then
+   angTan:=PI;
+
+if (x2<x1) and (y2<y1) then
+   angTan:=arctan((y2-y1)/(x2-x1))+PI;
+
+ //270°
+if (x2=x1) and (y2<y1) then
+   angTan:=3/2*PI;
+
+if (x2>x1) and (y2<y1) then
+   angTan:=arctan((y2-y1)/(x2-x1));
+
+ //se <0 --> +360°
+if angTan<0 then
+   angTan:=angTan+2*PI;
+
+ //se >=360 --> -360°
+if angTan>=2*PI then
+   angTan:=angTan-2*PI;
+
+end;
+
+
+
+//distanza tra 2 particelle
+function PTCdist(n1,n2:integer):real;
+begin
+PTCdist:=0;
+if (V[n1].alive) and (V[n2].alive) then
+   PTCdist:=dist(V[n1].cx,V[n1].cy,V[n2].cx,V[n2].cy);
+end;
+
+
+
+ //stampa al centro dello schermo, alla linea l
+procedure centra(s:string; l,col:integer);
+var
+   i:integer;
+   Bt,Bq,Bg,Ba,Bb:integer;   //quante parentesi aperte: tonda quadra graffa apice backslash
+begin
+
+Bb:=0;
+Bt:=0;
+Bq:=0;
+Bg:=0;
+Ba:=0;
+
+
+//gotoxy(1,l);
+//clreol;
+if ConsoleScr-length(s)>1 then
+   gotoxy(ConsoleScr div 2-length(s) div 2,l)
+   else
+   gotoxy(1,l);
+
+textcolor(col);
+
+for i:=1 to length(s) do
+   begin
+
+   if i<=length(s)-ConsoleScr then gotoxy(1,l);   //if string exceedes line
+
+   textcolor(col);
+                                     //color hierarchy
+   if Ba mod 2 = 1 then textcolor(12);
+   if Bb>0 then textcolor(15);
+   if Bg>0 then textcolor(11);   //9
+   if Bq>0 then textcolor(10);
+   if Bt>0 then textcolor(14);
+
+      case ord(s[i]) of
+
+      ord(' '):
+         Bb:=0;
+
+      ord('\'):
+         if (i=1) and (Bg=0) and (Bq=0) and (Bg=0) and (Ba=0) then
+            begin
+            Bb:=1;
+            textcolor(15);
+            end;
+
+      ord(''''):
+         begin
+         Ba:=Ba+1;
+         textcolor(12);
+         Bb:=0;
+         end;
+
+      ord('('):
+         begin
+         Bt:=Bt+1;
+         textcolor(14);
+         Bb:=0;
+         end;
+
+      ord(')'):
+         if Bt>0 then
+            begin
+            Bt:=Bt-1;
+            textcolor(14);
+            end;
+
+      ord('['):
+         begin
+         Bq:=Bq+1;
+         textcolor(10);
+         Bb:=0;
+         end;
+
+      ord(']'):
+         if Bq>0 then
+            begin
+            Bq:=Bq-1;
+            textcolor(10);
+            end;
+
+      ord('{'):
+         begin
+         Bg:=Bg+1;
+         textcolor(11);  //9
+         Bb:=0;
+         end;
+
+      ord('}'):
+         if Bg>0 then
+            begin
+            Bg:=Bg-1;
+            textcolor(11);      //9
+            end;
+
+      ord('0'): textcolor(11);
+      ord('1'): textcolor(11);
+      ord('2'): textcolor(11);
+      ord('3'): textcolor(11);
+      ord('4'): textcolor(11);
+      ord('5'): textcolor(11);
+      ord('6'): textcolor(11);
+      ord('7'): textcolor(11);
+      ord('8'): textcolor(11);
+      ord('9'): textcolor(11);
+
+      end;
+
+   write(s[i]);
+   end;
+
+//clreol;
+textcolor(15);
+end;
+
+
+
+//string: momento in cui viene chiamata
+function Instant:string;
+begin
+Instant:='';
+GetDate(Year,Month,Day,WDay);
+Instant:=Instant+DayStr[WDay];
+Instant:=Instant+st(Day);
+Instant:=Instant+MonthStr[Month];
+Instant:=Instant+st(Year);
+Instant:=Instant+'__'+ora;
+end;
+
+
+
+ //risultante di 2 numeri
+function risult(n,m:real):real;
+begin
+risult:=sqrt(sqr(n)+sqr(m));
+end;
+
+
+
+ //numero di cella più vicina ad un punto             esclusa se coo=x,y
+function nearest(x,y,r:real; s:integer):integer;
+var
+   i:integer;
+   dmin:real;
+begin
+
+nearest:=0;
+
+if r>0 then
+   dmin:=r
+   else
+   dmin:=0;
+
+//fazione generica
+if s=0 then
+for i:=1 to D do
+   if V[i].alive then
+      if (dist(V[i].cx,V[i].cy,x,y)>0) then
+         if dmin>0 then
+            begin
+            if (dist(V[i].cx,V[i].cy,x,y)<dmin) then
+               begin
+               dmin:=dist(V[i].cx,V[i].cy,x,y);
+               nearest:=i;
+               end;
+            end
+            else
+            begin
+            dmin:=dist(V[i].cx,V[i].cy,x,y);
+            nearest:=i;
+            end;
+
+//quella fazione
+if s>0 then
+for i:=1 to D do
+   if V[i].alive then
+      if (dist(V[i].cx,V[i].cy,x,y)>0) and (V[i].side=s) then
+         if dmin>0 then
+            begin
+            if (dist(V[i].cx,V[i].cy,x,y)<dmin) then
+               begin
+               dmin:=dist(V[i].cx,V[i].cy,x,y);
+               nearest:=i;
+               end;
+            end
+            else
+            begin
+            dmin:=dist(V[i].cx,V[i].cy,x,y);
+            nearest:=i;
+            end;
+
+//tutte tranne quella
+if s<0 then
+for i:=1 to D do
+   if V[i].alive then
+      if (dist(V[i].cx,V[i].cy,x,y)>0) and (V[i].side<>-s) then
+         if dmin>0 then
+            begin
+            if (dist(V[i].cx,V[i].cy,x,y)<dmin) then
+               begin
+               dmin:=dist(V[i].cx,V[i].cy,x,y);
+               nearest:=i;
+               end;
+            end
+            else
+            begin
+            dmin:=dist(V[i].cx,V[i].cy,x,y);
+            nearest:=i;
+            end;
+
+end;
+
+
+
+ //numero di cella più vicina ad un punto             esclusa se coo=x,y
+function nearest0(x,y,r:real; s:integer):integer;
+var
+   i:integer;
+   dmin:real;
+begin
+
+nearest0:=0;
+
+if r>0 then
+   dmin:=r
+   else
+   dmin:=0;
+
+//fazione generica
+if s=0 then
+for i:=1 to D do
+   if V[i].alive then
+         if dmin>0 then
+            begin
+            if (dist(V[i].cx,V[i].cy,x,y)<dmin) then
+               begin
+               dmin:=dist(V[i].cx,V[i].cy,x,y);
+               nearest0:=i;
+               end;
+            end
+            else
+            begin
+            dmin:=dist(V[i].cx,V[i].cy,x,y);
+            nearest0:=i;
+            end;
+
+//quella fazione
+if s>0 then
+for i:=1 to D do
+   if V[i].alive then
+      if (V[i].side=s) then
+            if dmin>0 then
+            begin
+            if (dist(V[i].cx,V[i].cy,x,y)<dmin) then
+               begin
+               dmin:=dist(V[i].cx,V[i].cy,x,y);
+               nearest0:=i;
+               end;
+            end
+            else
+            begin
+            dmin:=dist(V[i].cx,V[i].cy,x,y);
+            nearest0:=i;
+            end;
+
+//tutte tranne quella
+if s<0 then
+for i:=1 to D do
+   if V[i].alive then
+      if (V[i].side<>-s) then
+         if dmin>0 then
+            begin
+            if (dist(V[i].cx,V[i].cy,x,y)<dmin) then
+               begin
+               dmin:=dist(V[i].cx,V[i].cy,x,y);
+               nearest0:=i;
+               end;
+            end
+            else
+            begin
+            dmin:=dist(V[i].cx,V[i].cy,x,y);
+            nearest0:=i;
+            end;
+
+end;
+
+
+
+//vero se non ci sono particelle entro un raggio di 1 intorno ad un punto di date coo
+function blank(cx,cy:real):boolean;
+var
+   i:integer;
+   dst:real;
+begin
+blank:=true;
+for i:=1 to D do
+    if V[i].alive then
+       begin
+       dst:=dist(cx,cy,V[i].cx,V[i].cy);
+       if (dst<1) then
+          blank:=false;
+       end;
+end;
+
+
+//come blank, ma non considera la ptc di dis 0
+{function blank0(cx,cy:real):boolean;
+var
+   i:integer;
+   dst:real;
+begin
+blank0:=true;
+for i:=1 to D do
+    if V[i].alive then
+       begin
+       dst:=dist(cx,cy,V[i].cx,V[i].cy);
+       if (dst<1) and (dst>0) then
+          blank0:=false;
+       end;
+end;  }
+
+
+                     //PvP = particle versus particle
+//PvP force                                                 tenendo conto dello spostamento di entrambe
+function PvPfrc(cx1,cy1,vx1,vy1,cx2,cy2,vx2,vy2:real):real;
+var
+   a,ang,frc:real;
+begin
+
+a:=angTan(cx1,cy1,cx2,cy2);
+
+frc:=risult(vx1-vx2,vy1-vy2);
+ang:=angTan(0,0,vx1-vx2,vy1-vy2);
+
+ang:=ang-a;
+
+PvPfrc:=frc*cos(ang);
+
+end;
+
+
+
+//PvP force  ridotta                                               NON tenendo conto dello spostamento di entrambe
+function PvPf(cx1,cy1,vx1,vy1,cx2,cy2:real):real;
+var
+   a,ang,frc:real;
+begin
+
+a:=angTan(cx1,cy1,cx2,cy2);
+
+frc:=risult(vx1,vy1);
+ang:=angTan(0,0,vx1,vy1);
+
+ang:=ang-a;
+
+PvPf:=frc*cos(ang);
+if PvPf<0 then PvPf:=0;
+
+end;
+
+
+
+//fill spaces with '_'
+function Fill(s:string):string;
+var
+   i:integer;
+begin
+Fill:='';
+for i:=1 to length(s) do
+   if s[i]=' ' then
+      Fill:=Fill+'_'
+      else
+      Fill:=Fill+s[i];
+end;
+
+//'_' -> ' '
+function unFill(s:string):string;
+var
+   i:integer;
+begin
+unFill:='';
+for i:=1 to length(s) do
+   if s[i]='_' then
+      unFill:=unFill+' '
+      else
+      unFill:=unFill+s[i];
+end;
+
+
+
+// maiusc-->minusc
+function minusc(s:shortstring):shortstring;
+var
+   i:integer;
+begin
+minusc:='';
+for i:=1 to length(s) do
+   begin
+   if (ord(s[i])>=65) and (ord(s[i])<=90) then
+      s[i]:=chr(ord(s[i])+32);
+   minusc:=minusc+s[i];
+   end;
+end;
+
+
+
+//stringa alfabeticamente prima
+function vienePrima(s1,s2:shortstring):boolean;
+var
+   i:integer;
+begin
+
+vienePrima:=true;
+
+
+if length(s1)<length(s2) then
+   for i:=1 to length(s2)-length(s1) do s1:=s1+' '
+   else
+   for i:=1 to length(s1)-length(s2) do s2:=s2+' ';
+
+for i:=1 to length(s1) do
+   begin
+
+   if ord(s1[i])<ord(s2[i]) then break;
+
+   if ord(s1[i])>ord(s2[i]) then
+      begin
+      vienePrima:=false;
+      break;
+      end;
+
+   end;
+
+if s2='' then vienePrima:=true;
+if s1='' then vienePrima:=false;
+if s1=s2 then vienePrima:=false;   //keep it false!
+
+end;
+
+
+
+
+
+ {### File ###}
+
+
+
+//creates a new file
+procedure AddFile(name:shortstring);
+begin
+
+{$I-}
+if not FileExists(percorso+'Impulse\'+name+'.txt') then
+      begin
+      assign(fl,percorso+'Impulse\'+name+'.txt');
+      rewrite(fl);
+      close(fl);
+      end;
+{$I+}
+
+end;
+
+
+
+//creates a new dir
+procedure AddDir(name:shortstring);
+begin
+
+{$I-}
+if IOresult=0 then
+   mkDir(percorso+'Impulse\'+name);
+{$I+}
+             /// don't ask me -.-#
+{$I-}
+if ioresult=0 then
+   begin
+   end;
+{$I+}
+
+end;
+
+
+
+//elimina cartella
+procedure RemoveDir(name:shortstring);
+begin
+
+{$I-}
+if IOresult=0 then rmDir(percorso+'Impulse\'+name);
+{$I+}
+end;
+
+
+
+// rewrite the file
+procedure RewriteFile(name:shortstring);
+begin
+   assign(fl,percorso+'Impulse\'+name+'.txt');
+   rewrite(fl);
+   close(fl);
+end;
+
+
+
+// writes on the bottom of a file
+procedure AppendFile(name:shortstring; testo:string);
+begin
+
+{$I-}
+if ioresult=0 then
+   begin
+   assign(fl,percorso+'Impulse\'+name+'.txt');
+   append(fl);
+   writeln(fl,testo);
+   close(fl);
+   end;
+{$I+}
+
+end;
+
+
+
+//deletes a file
+procedure DltFile(name:shortstring);        //delete already exists!
+begin
+
+{$I-}
+//labelNumI:=IOresult;
+if IOresult=0 then
+   begin
+   if FileExists(percorso+'Impulse\'+name+'.txt') then
+      deleteFile(percorso+'Impulse\'+name+'.txt');
+   end;
+{$I+}
+
+end;
+
+
+
+ //dice se c'è la stringa di una parola in una stringa
+function find_Str(s:string; sh:shortstring):integer;
+var
+   i,j:integer;
+   frase:string;
+   word:shortstring;
+   match:boolean;
+begin
+
+find_Str:=0;
+
+frase:=' '+s+' ';
+word:=' '+sh+'=';
+
+
+match:=false;                                             //           'f=1'
+                                                          //                    -12345-
+if length(s)>=length(sh)+2 then                           //                    ' f=1 '   ' f'    5-2
+   for i:=1 to length(frase)-length(word)-1 do            //                    ' f'    1
+      begin                                               //                     ' f'   2
+      match:=true;
+
+      for j:=1 to length(word) do
+         begin
+         if frase[i+j-1]<>word[j] then
+            match:=false;
+         end;
+
+      if match then break;
+      end;
+
+if match then
+   find_Str:=i+length(word)-2;
+
+end;
+
+
+
+ //dice se c'è il valore di una parola in una stringa
+function find_StrVal(s:string; sh:shortstring):integer;
+var
+   i,j:integer;
+   frase:string;
+   word:shortstring;
+   match:boolean;
+begin
+
+find_StrVal:=0;
+
+frase:=' '+s+' ';
+word:=' '+sh+'=';
+
+
+match:=false;                                             //           'f=1'
+                                                          //                    -12345-
+if length(s)>=length(sh)+2 then                           //                    ' f=1 '   ' f'    5-2
+   for i:=1 to length(frase)-length(word)-1 do            //                    ' f'    1
+      begin                                               //                     ' f'   2
+      match:=true;
+
+      for j:=1 to length(word) do
+         begin
+         if frase[i+j-1]<>word[j] then
+            match:=false;
+         end;
+
+      if match then break;
+      end;
+
+if match then
+   find_StrVal:=i+length(word)-2;
+
+end;
+
+
+
+ //restituisce il valore string di una parola in una stringa
+function strStr(s:string; sh:shortstring):shortstring;
+var
+   i,j,f:integer;
+   frase:string;
+begin
+
+strStr:='';
+frase:=' '+s+' ';
+
+f:=find_Str(s,sh);
+
+if f>0 then
+   begin
+   i:=f;
+
+   repeat
+   i:=i+1
+   until
+   (i>=length(frase)) or (frase[i]=' ');
+
+   for j:=f+1 to i do
+      strStr:=strStr+frase[j];
+
+   end;
+
+strStr:=cut(strStr,'=',' ');
+
+end;
+
+
+
+  //restituisce il valore real di una parola in una stringa
+function strVal(s:string; sh:shortstring):real;
+begin
+strVal:=nm(strStr(s,sh));
+end;
+
+
+
+ //finds a string in the file
+function fileStr(name,sh:string):string;
+var
+   fl:text;
+   trovato:boolean;
+   s:string;
+begin
+
+fileStr:='';
+trovato:=false;
+s:='';
+
+{$I-}
+if IOresult=0 then
+   if fileExists(percorso+'Impulse\'+name+'.txt') then
+      begin
+      assign(fl,percorso+'Impulse\'+name+'.txt');
+      reset(fl);
+      //cerca
+      if not eof(fl) then
+         while (not (eof(fl))) and (not (trovato)) do
+            begin
+            readln(fl,s);
+            if find_str(s,sh)>0 then
+               begin
+               trovato:=true;
+               fileStr:=strStr(s,sh);
+               end;
+            end;
+      //
+      close(fl);
+      end;
+{$I+}
+
+end;
+
+
+
+ //finds a val in the file (fileVal('report','Time')   Time=10        ricorda di usare "." e non ","
+function fileVal(name,sh:shortstring):real;
+begin
+
+fileVal:=nm(fileStr(name,sh));
+
+end;
+
+
+
+//adds Impulse dir + crea file iniziali
+procedure SetFiles;
+begin
+
+ //  create Impulse directory
+percorso:='C:\';
+
+
+{$I-}
+if IOresult=0 then
+   begin
+   mkDir('C:\Impulse');
+   mkDir('C:\Impulse\global');
+   end;
+{$I+}
+
+
+ //  read new path
+
+AppendFile('global\path','path='+percAux);
+percorso:=percAux;
+
+
+
+{$I-}
+if IOresult=0 then
+   begin
+   mkDir(percorso+'Impulse');
+   end;
+{$I+}
+
+
+addDir('global');
+
+addFile('global\path');
+
+addFile('global\SizeX');    // find DscrX DscrY
+if fileVal('global\SizeX','SizeX')<=128 then
+   begin
+   rewriteFile('global\SizeX');
+   appendFile('global\SizeX','SizeX='+st(GetMaxX));
+   end;
+
+addFile('global\SizeY');
+if fileVal('global\SizeY','SizeY')<=128 then
+   begin
+   RewriteFile('global\SizeY');
+   AppendFile('global\SizeY','SizeY='+st(GetMaxY));
+   end;
+
+DscrX:=trunc(fileVal('global\SizeX','SizeX'));
+DscrY:=trunc(fileVal('global\SizeY','SizeY'));
+
+
+addFile('global\PtcPX');
+if fileVal('global\PtcPX','ParticlePX')<=0 then
+   begin
+   RewriteFile('global\PtcPX');
+   AppendFile('global\PtcPX','ParticlePX=3');    //3=default
+   end;
+ParticlePX:=trunc(fileVal('global\PtcPX','ParticlePX'));
+
+
+addFile('global\pointer');
+if fileStr('global\pointer','pointer')='' then
+   begin
+   RewriteFile('global\pointer');
+   AppendFile('global\pointer','pointer=1');    //1=default
+   end;
+Npointer:=trunc(fileVal('global\pointer','pointer'));
+
+
+addDir('saves');
+addFile('worlds');
+addFile('InPut'); //warning
+
+addDir('screenshots');
+addFile('screenshots\+ScreenShotList');
+
+
+rewriteFile('last_event');
+rewriteFile('report');
+
+
+rewriteFile('version');
+   AppendFile('version','');
+   AppendFile('version','     '+Version);    //refresh!
+
+
+
+end;
+
+
+
+ // applica i dati memorizzati in un file settings
+procedure applySettings(name:shortstring);
+begin
+
+T:=fileVal(name,'Time');
+G:=fileVal(name,'Gr');
+if fileVal(name,'Gon')=1 then
+   Bgravy:=true
+   else
+   Bgravy:=false;
+if fileVal(name,'Qon')=1 then
+   Bcharge:=true
+   else
+   Bcharge:=false;
+if fileVal(name,'Uon')=1 then
+   Burti:=true
+   else
+   Burti:=false;
+T0:=fileVal(name,'T0');
+Ntexture:=trunc(fileVal(name,'Ntxt'));
+Sx:=fileVal(name,'Sx');
+Sy:=fileVal(name,'Sy');
+if fileVal(name,'Zoom')>0 then
+   Zoom:=fileVal(name,'Zoom');
+Attrito:=fileVal(name,'Att');
+if Attrito=0 then Attrito:=1;
+
+end;
+
+
+
+ //riordina lista mondi
+procedure RefreshWorldList;
+const
+   L=255;                //max num of worlds  2^8-1
+var
+   i,num:integer;
+   ordo:boolean;
+   w:array[1..L]of shortstring;
+   sAux:shortstring;
+begin
+
+
+for i:=1 to L do w[i]:='';
+
+
+ //cerca numero mondi
+num:=0;
+for i:=1 to L do
+   begin
+   w[i]:=FileStr('worlds',st(i));  //take
+   if w[i]<>'' then
+      num:=num+1;
+   end;
+
+ //se non trova
+if num=0 then
+   begin        //se non ce ne sono
+   RewriteFile('worlds');
+   AppendFile('worlds','No worlds loaded');
+   end;
+
+ //se trova
+if num>0 then
+   begin
+
+   //filtro esistenza
+   num:=0;
+   for i:=1 to L do
+       begin
+       if length(w[i])>0 then
+          if not fileExists(percorso+'Impulse\saves\'+w[i]+'\data.txt') then
+             w[i]:='';
+       if length(w[i])>0 then num:=i;
+       end;
+
+   //algoritmo di compressione
+   ordo:=false;
+   while not ordo do
+      begin
+      ordo:=true;
+      for i:=1 to num-1 do
+         if (w[i]='') and (w[i+1]<>'') then
+            begin
+            ordo:=false;
+            w[i]:=w[i+1];
+            w[i+1]:='';
+            end;
+      end;
+
+   //algoritmo di riordinamento
+   ordo:=false;
+   if num>1 then
+   while not ordo do
+      begin
+      ordo:=true;
+      for i:=1 to num-1 do
+         if vienePrima(minusc(w[i+1]),minusc(w[i])) then
+            begin
+            ordo:=false;
+            sAux:=w[i];
+            w[i]:=w[i+1];
+            w[i+1]:=sAux;
+            end;
+      end;
+
+   //elimina doppi
+      for i:=num-1 downto 1 do
+         if minusc(w[i+1])=minusc(w[i]) then
+            begin
+            w[i+1]:='';
+            end;
+
+
+   //algoritmo di compressione
+   ordo:=false;
+   while not ordo do
+      begin
+      ordo:=true;
+      for i:=1 to num-1 do
+         if (w[i]='') and (w[i+1]<>'') then
+            begin
+            ordo:=false;
+            w[i]:=w[i+1];
+            w[i+1]:='';
+            end;
+      end;
+
+   //cerca numero mondi
+   num:=0;
+   for i:=1 to L do
+      if FileStr('worlds',st(i))<>'' then
+         num:=num+1;
+
+   //salva
+   RewriteFile('worlds');
+   AppendFile('worlds','n='+st(num));
+   for i:=1 to num do
+      AppendFile('worlds',st(i)+'='+w[i]);
+
+   end;
+
+
+end;
+
+
+
+ //riordina lista screenshots
+procedure RefreshShotsList;
+const
+   L=255;                //max num of worlds  2^8-1
+var
+   i,num:integer;
+   ordo:boolean;
+   w:array[1..L]of shortstring;
+   sAux:shortstring;
+begin
+
+for i:=1 to L do w[i]:='';
+
+ //cerca numero mondi
+num:=0;
+for i:=1 to L do
+   begin
+   w[i]:=FileStr('screenshots\+ScreenShotList',st(i));  //take
+   if w[i]<>'' then
+      num:=num+1;
+   end;
+
+ //se non trova
+if num=0 then
+   begin        //se non ce ne sono
+   RewriteFile('screenshots\+ScreenShotList');
+   AppendFile('screenshots\+ScreenShotList','No screenshots loaded');
+   end;
+
+ //se trova
+if num>0 then
+   begin
+
+   //filtro esistenza
+   num:=0;
+   for i:=1 to L do
+       begin
+       if w[i]<>'' then
+          if not fileExists(percorso+'Impulse\screenshots\'+w[i]+'.txt') then
+             w[i]:='';
+       if length(w[i])>0 then num:=i;
+       end;
+
+   //algoritmo di compressione
+   ordo:=false;
+   while not ordo do
+      begin
+      ordo:=true;
+      for i:=1 to num-1 do
+         if (w[i]='') and (w[i+1]<>'') then
+            begin
+            ordo:=false;
+            w[i]:=w[i+1];
+            w[i+1]:='';
+            end;
+      end;
+
+   //algoritmo di riordinamento
+   ordo:=false;
+   if num>1 then
+   while not ordo do
+      begin
+      ordo:=true;
+      for i:=1 to num-1 do
+         if vienePrima(minusc(w[i+1]),minusc(w[i])) then
+            begin
+            ordo:=false;
+            sAux:=w[i];
+            w[i]:=w[i+1];
+            w[i+1]:=sAux;
+            end;
+      end;
+
+   //elimina doppi
+      for i:=num-1 downto 1 do
+         if fill(minusc(w[i+1]))=fill(minusc(w[i])) then
+            begin
+            w[i+1]:='';
+            end;
+
+   //algoritmo di compressione
+   ordo:=false;
+   while not ordo do
+      begin
+      ordo:=true;
+      for i:=1 to num-1 do
+         if (w[i]='') and (w[i+1]<>'') then
+            begin
+            ordo:=false;
+            w[i]:=w[i+1];
+            w[i+1]:='';
+            end;
+      end;
+
+   //cerca numero mondi
+   num:=0;
+   for i:=1 to L do
+      if FileStr('screenshots\+ScreenShotList',st(i))<>'' then
+         num:=num+1;
+
+   //salva
+   RewriteFile('screenshots\+ScreenShotList');
+   AppendFile('screenshots\+ScreenShotList','n='+st(num));
+   for i:=1 to num do
+      AppendFile('screenshots\+ScreenShotList',st(i)+'='+w[i]);
+
+   end;
+
+
+end;
+
+
+
+ //nuovo mondo
+procedure NewWorld(name:shortstring);
+var n:integer;
+begin
+
+clearDevice;
+clrScreen(0);
+clrScr;
+
+RefreshWorldList;
+n:=1+trunc(fileVal('worlds','n'));
+
+
+AddDir('saves\'+name);
+
+
+if not FileExists(percorso+'Impulse\saves\'+name+'\data.txt') then
+   begin
+   AddFile('saves\'+name+'\data');
+   AppendFile('saves\'+name+'\data','world='+name);
+   end;
+
+
+if not FileExists(percorso+'Impulse\saves\'+name+'\settings.txt') then
+   begin
+   AddFile('saves\'+name+'\settings');
+   AppendFile('saves\'+name+'\settings','world='+name);
+   //create parameter list
+   AppendFile('saves\'+name+'\settings','T='+st(T));
+   AppendFile('saves\'+name+'\settings','Gr=1');
+   AppendFile('saves\'+name+'\settings','Gon=0');
+   AppendFile('saves\'+name+'\settings','Uon=1');
+   AppendFile('saves\'+name+'\settings','T0=0.1');
+   AppendFile('saves\'+name+'\settings','Ntxt=0');
+   AppendFile('saves\'+name+'\settings','Sx=0');
+   AppendFile('saves\'+name+'\settings','Sy=0');
+   AppendFile('saves\'+name+'\settings','Zoom=16');
+   AppendFile('saves\'+name+'\settings','Att=0.99');
+   //
+   ApplySettings('saves\'+name+'\settings');
+   end;
+
+
+AppendFile('worlds',st(n)+'='+name);
+
+
+RefreshWorldList;
+
+clrScr;
+clrScreen(1);
+
+
+end;
+
+
+
+ //salva il mondo
+procedure SaveWorld(name:shortstring);
+var
+  i,n:integer;
+begin
+
+
+RewriteFile('saves\'+name+'\data');
+RewriteFile('saves\'+name+'\settings');
+
+
+//save parameters
+
+//AppendFile('saves\'+name+'\data','World='+name);
+AppendFile('saves\'+name+'\settings','version'+Version);
+AppendFile('saves\'+name+'\settings','saved '+Instant);
+AppendFile('saves\'+name+'\settings','time='+st(T));
+AppendFile('saves\'+name+'\settings','Gr='+st(G));
+AppendFile('saves\'+name+'\settings','T0='+st(T0));
+AppendFile('saves\'+name+'\settings','Ntxt='+st(Ntexture));
+AppendFile('saves\'+name+'\settings','Sx='+st(Sx));
+AppendFile('saves\'+name+'\settings','Sy='+st(Sy));
+AppendFile('saves\'+name+'\settings','zoom='+st(Zoom));
+AppendFile('saves\'+name+'\settings','att='+st(Attrito));
+
+if Bgravy then
+   AppendFile('saves\'+name+'\settings','Gon=1')
+   else
+   AppendFile('saves\'+name+'\settings','Gon=0');
+if Bcharge then
+   AppendFile('saves\'+name+'\settings','Qon=1')
+   else
+   AppendFile('saves\'+name+'\settings','Qon=0');
+if Burti then
+   AppendFile('saves\'+name+'\settings','Uon=1')
+   else
+   AppendFile('saves\'+name+'\settings','Uon=0');
+
+
+AppendFile('saves\'+name+'\data','world='+name);
+
+n:=0;
+
+for i:=1 to D do
+    if V[i].alive then
+       begin
+       n:=n+1;                          // NUM   // cx   // cy   // vx   // vy   // col1   // col2   // side   // res   // com
+       AppendFile(
+       'saves\'+name+'\data',
+       '{['+st(i)+']'+
+       ' x='+st(V[i].cx)+
+       ' y='+st(V[i].cy)+
+       ' vx='+st(V[i].vx)+
+       ' vy='+st(V[i].vy)+
+       ' c1='+st(V[i].col1)+
+       ' c2='+st(V[i].col2)+
+       ' s='+st(V[i].side)+
+       ' r='+st(V[i].res)+
+       ' m='+st(V[i].m)+
+       ' q='+st(V[i].q)+
+       ' '''+Fill(V[i].com)+
+       ''' }');
+       end;
+
+AppendFile('saves\'+name+'\data','n='+st(n));
+AppendFile('saves\'+name+'\settings','n='+st(n));
+
+end;
+
+
+
+//carica un mondo
+procedure LoadWorld(name:shortstring);
+var
+   i,j,n,m:integer;
+   line:string;
+begin
+
+//set
+
+RefreshWorldList;
+
+ClearDevice;
+clrScreen(1);
+
+VetReSet;
+
+ClearDevice;
+
+
+//load parameters
+name:=fill(name);
+WorldName:=name;
+applySettings('saves\'+name+'\settings');      // <-- QUA settaggi del mondo
+
+m:=trunc(fileVal('saves\'+name+'\data','n')); //%  output
+
+j:=-1;   //<0%
+
+// ---LOADING PROCEDURE ---
+
+
+name:=fill(name);
+assign(fl,percorso+'\Impulse\saves\'+name+'\data.txt');
+reset(fl);
+
+
+
+while not eof(fl) do
+   begin
+
+   readln(fl,line);
+
+   if line[1]='{' then
+      begin
+
+      n:=trunc(nm(cut(line,'[',']')));
+
+      i:=(n*100) div m;
+      if i<>j then
+         begin
+         centra(st(i)+'%',12,11);
+         j:=i;
+         end;
+
+      if n>D then
+         repeat(readln(fl,line)) until eof(fl);
+
+      if n>0 then
+         begin
+
+         V[n].alive:=true;
+         V[n].cx:=strVal(line,'x');
+         V[n].cy:=strVal(line,'y');
+         V[n].lcx:=strVal(line,'x');
+         V[n].lcy:=strVal(line,'y');
+         V[n].vx:=strVal(line,'vx');
+         V[n].vy:=strVal(line,'vy');
+         V[n].col1:=trunc(strVal(line,'c1'));
+         V[n].col2:=trunc(strVal(line,'c2'));
+         V[n].side:=trunc(strVal(line,'s'));
+         V[n].res:=strVal(line,'r');
+         V[n].m:=strVal(line,'m');
+         V[n].q:=strVal(line,'q');
+         V[n].com:=unFill(cut(line,'''',''''));
+
+         end;
+
+      end;
+
+   //skip
+   if keypressed then
+      begin
+      Ccom:=readkey;
+      if ord(Ccom)=27 then
+         begin
+         VetReSet;
+         goto  gotoHome;
+         end;
+      end;
+
+   end;
+
+
+close(fl);
+
+RefreshWorldList;
+
+end;
+
+
+ 
+ //elimina un mondo                                                                                                                                                                                                                                                                      tiaF amsuC ramO
+procedure deleteWorld(name:shortstring);
+const
+   L=255;
+var
+   i,n,ban:integer;
+   w:array[1..L]of shortstring;
+begin
+
+
+RefreshWorldList;
+
+ban:=0;
+n:=trunc(fileVal('worlds','n'));
+
+for i:=1 to n do
+   if fileStr('worlds',st(i))=name then
+      ban:=i;
+
+if ban>0 then
+   begin
+
+   RemoveDir('saves\'+name);
+
+   for i:=1 to n do
+      w[i]:=fileStr('worlds',st(i));
+
+   rewriteFile('worlds');
+
+   for i:=1 to n do
+      if i<>ban then
+         appendFile('worlds',w[i]);
+
+   end;
+
+end;
+
+
+//aggiungi commento
+procedure commentWorld(name:shortstring);
+var
+   comm:shortstring;
+begin
+
+centra('                        ',14,15);
+centra('',14,15);
+comm:=readhere;
+
+name:=fill(name);
+
+rewriteFile('saves\'+name+'\comment');
+AppendFile('saves\'+name+'\comment','comment='+Fill(comm));
+
+centra('   '+name+' - '+comm+'   ',14,14);
+
+end;
+
+
+
+
+ 
+ {### Graph ###}
+
+procedure SetGraph;
+begin
+
+ //(graph)
+GraphicsDriver:=Detect;
+InitGraph(GraphicsDriver, GraphicsMode,'');
+ErrCode:=GraphResult;
+if GraphResult<>grOK then
+    begin
+    ClrScr;
+    writeln('Graphics error occured: ',
+    GraphErrorMsg(ErrCode));
+    Halt(1);
+    end;
+
+end;
+
+
+procedure Graf;
+var
+   dista:array[1..D]of real;
+   i,j,i1,k:integer;
+   max:real;
+begin
+
+//clearDevice;
+
+if DoGraf then
+begin
+
+for i:=1 to D do
+   if V[i].alive then
+      dista[i]:=dist(Sx,Sy,V[i].cx,V[i].cy);
+
+max:=0;
+for i:=1 to D do
+   if V[i].alive then
+      if dista[i]>max then
+         max:=dista[i];
+
+for i:=1 to D do
+   if V[i].alive then
+      dista[i]:=round(dista[i]*100/max);
+
+for i:=1 to 100 do
+   freq[i]:=0;
+
+for i:=1 to D do
+   if V[i].alive then
+      freq[round(dista[i])]:=freq[round(dista[i])]+1;
+
+max:=0;
+for i:=1 to 100 do
+   if freq[i]>max then
+      max:=freq[i];
+
+if max>0 then
+   for i:=1 to 100 do
+      freq[i]:=round(freq[i]*100/max);
+
+//stampa su Screen
+k:=1;
+if max>0 then
+for i:=1 to 100 do
+   for j:=1 to k do
+   begin
+   for i1:=1 to freq[i]*k do
+       Screen[i*k+j,i1,0]:=11;
+   end;
+
+end;
+
+end;
+
+
+
+
+
+ {### Sulle particelle ###}
+
+
+
+ //numero particelle vive
+function Nalive:integer;
+var
+   i:integer;
+begin
+Nalive:=0;
+for i:=1 to D do
+   if V[i].alive then
+      Nalive:=Nalive+1;
+end;
+
+
+ //fa nascere una nuova cella di caratteristiche: numero, coo, restit, comando, colore
+procedure set_(i,sd:integer; x,y,vx,vy,rs,m,q:real;  stri:string; cl,c2:shortint);    //imposta una cellula:   numero di serie, coo XY,  command   , restituz,
+var
+   ix,iy,delta:real;              //delta random empty space research length
+begin
+
+if cl=15 then cl:=0;
+cl:=cl mod 8;
+
+case cl of
+0: cl:=15;
+1: cl:=9;
+2: cl:=10;
+3: cl:=14;
+4: cl:=12;
+5: cl:=4;
+6: cl:=5;
+7: cl:=13;
+end;
+
+case c2 of
+0: c2:=15;
+1: c2:=9;
+2: c2:=10;
+3: c2:=14;
+4: c2:=12;
+5: c2:=4;
+6: c2:=5;
+7: c2:=13;
+end;
+
+if (i>0) and (i<=D) then
+   begin
+
+   if m<=0 then m:=1;
+
+   ix:=x;
+   iy:=y;
+   if rs<0 then rs:=0;        //<=?
+   if rs>1 then rs:=1;
+   delta:=1;
+   while not blank(ix,iy) do
+      begin
+      ix:=ix+(random-random+random-random)*delta;
+      iy:=iy+(random-random+random-random)*delta;
+      delta:=delta*9/8;
+      end;
+   if cl mod 16=0 then cl:=15;
+   if sd<0 then sd:=-sd;
+   if sd>=256 then
+      sd:=sd mod 256;
+
+   //assegna valori a ptc
+   V[i].alive:=true;
+   V[i].side:=sd;
+   V[i].cx:=ix;
+   V[i].cy:=iy;
+   V[i].lcx:=ix;
+   V[i].lcy:=iy;
+   V[i].vx:=vx;
+   V[i].vy:=vy;
+   V[i].lvx:=vx;
+   V[i].lvy:=vy;
+   V[i].res:=rs;
+   V[i].m:=m;
+   V[i].q:=q;
+   V[i].com:=stri;   //comandi
+   V[i].col1:=cl;
+   V[i].col2:=c2;
+   V[i].slc:=false;
+
+   end;
+
+end;
+
+
+ // set senza procedura dist>1
+procedure set0(i,sd:integer; x,y,vx,vy,rs:real;  stri:string; cl,c2:shortint);    //imposta una cellula:   numero di serie, coo XY,  command
+begin
+
+if cl=15 then cl:=0;
+cl:=cl mod 8;
+
+case cl of
+0: cl:=15;
+1: cl:=9;
+2: cl:=10;
+3: cl:=14;
+4: cl:=12;
+5: cl:=4;
+6: cl:=5;
+7: cl:=13;
+end;
+
+case c2 of
+0: c2:=15;
+1: c2:=9;
+2: c2:=10;
+3: c2:=14;
+4: c2:=12;
+5: c2:=4;
+6: c2:=5;
+7: c2:=13;
+end;
+
+
+if (i>0) and (i<=D) then
+   begin
+
+   if rs<0 then rs:=0;        //<=?
+   if rs>1 then rs:=1;
+
+   //assegna valori a ptc
+   V[i].alive:=true;
+   V[i].side:=sd;
+   V[i].cx:=x;
+   V[i].cy:=y;
+   V[i].lcx:=x;
+   V[i].lcy:=y;
+   V[i].vx:=vx;
+   V[i].vy:=vy;
+   V[i].lvx:=vx;
+   V[i].lvy:=vy;
+   V[i].res:=rs;
+   V[i].com:=stri;   //comandi
+   V[i].col1:=cl;
+   V[i].col2:=c2;
+
+   end;
+
+end;
+
+
+
+ //killa la cell num n
+procedure kill(n:integer);   // killa una cella
+begin
+
+if n>0 then
+with V[n] do
+     begin
+     alive:=false;
+     cx:=0;
+     cy:=0;
+     lcx:=0;
+     lcy:=0;
+     res:=0;
+     com:='';
+     col1:=0;    //wip
+     col2:=0;
+     slc:=false;
+     end;
+end;
+
+ //aggiungi un comando alla stringa com di una cella
+procedure addCom(n:integer; comm:shortstring);     //aggiungi comando (alla fine)
+begin
+
+V[n].com:=V[n].com+'{'+comm+'}';
+
+end;
+
+
+
+
+ {### Comandi ###}
+
+
+ //leggi comando stringa da tastiera "Scom" global shortstring
+procedure readScom(l:shortint);
+var
+   Ch:char;
+begin
+
+gotoxy(1,l);
+clreol;
+
+Scom:='\';
+Ch:=chr(0);
+centra('\',l,0);
+cursoron;
+
+repeat
+
+   Ch:=readkey;
+      case ord(Ch) of
+      8: if length(Scom)>0 then delete(Scom,length(Scom),1);
+      127: Scom:='';
+      13: Ch:=chr(13);
+      27: begin
+          Scom:='';
+          Ch:=chr(13);
+          end;
+      7: Ch:=chr(0);
+      9: Ch:=chr(0);
+
+      else
+
+      Scom:=Scom+Ch;
+
+      end;
+
+
+    centra(' '+Scom+' ',l,15);
+    gotoxy(whereX-1,whereY);
+
+until
+ord(Ch)=13;
+
+cursoroff;
+gotoxy(1,l);
+clreol;
+
+end;
+
+
+
+//fai report fazioni
+procedure reportSide;
+var
+   i:integer;
+   sides:array[0..255]of integer;
+begin
+
+for i:=0 to 255 do sides[i]:=0;
+
+for i:=1 to D do
+   if V[i].alive then
+      sides[V[i].side]:=sides[V[i].side]+1;
+
+reportln;
+   report('----------------');
+   report('');
+   report('   Report of: side values [0-255] (0=generc)   at '+st(T));
+   report('');
+   for i:=0 to 255 do
+      report(st(sides[i]));
+   report('');
+   report('----------------');
+   reportln;
+
+end;
+
+
+
+//fai show fazioni
+procedure showSide;
+var
+   i:integer;
+   sides:array[0..255]of integer;
+begin
+
+for i:=0 to 255 do sides[i]:=0;
+
+for i:=1 to D do
+   if V[i].alive then
+      sides[V[i].side]:=sides[V[i].side]+1;
+
+clrscr;
+centra('   '+st(NumAlive)+' Alive ptc',2,11);
+gotoxy(1,4);
+writeln('Sides');
+writeln;
+
+for i:=0 to 255 do
+  if sides[i]>0 then
+  begin
+  case i mod 8 of
+     0: textcolor(15);
+     1: textcolor(9);
+     2: textcolor(10);
+     3: textcolor(14);
+     4: textcolor(12);
+     5: textcolor(4);
+     6: textcolor(5);
+     7: textcolor(13);
+     end;              //side colors
+  write('   '+st(i)+')');
+  textcolor(15);
+  writeln('  '+st(sides[i]));
+  end;
+
+
+end;
+
+
+
+ //esegui comandi utente       Scom
+procedure ExeScom;
+var
+   CooX,CooY,SumX,SumY,Numb,tempRes,mass,charge,nR1,nR2:real;
+   i,num,col1,col2:integer;
+   strAux:string;
+   sAux:shortstring;
+begin
+
+
+// --- elabora Scom ---                                                         console commands
+
+
+if Scom='' then Scom:=' ';
+
+if Scom[1]='§' then Scom[1]:=' ';
+if Scom[length(Scom)]='§' then Scom[length(Scom)]:=' ';
+
+
+if Scom[1]<>' ' then Scom:=' '+Scom;
+if Scom[length(Scom)]<>' ' then Scom:=Scom+' ';    // ' '+Scom+' '
+
+strAux:=Scom;
+Scom:='';
+                                     //Scom assimila staAux
+while length(strAux)>0 do
+      if strAux[1]='$' then
+         begin
+         if cut(strAux,'$','$')<>'' then
+            Scom:=Scom+st(strVal(cut(path,'\','.'),cut(strAux,'$','$')));  //name of file
+         repeat delete(strAux,1,1) until (strAux[1]='$') or (length(strAux)=0);
+         if length(strAux)>0 then delete(strAux,1,1);
+         end
+      else
+         begin
+         Scom:=Scom+strAux[1];
+         delete(strAux,1,1);
+         end;
+
+if Scom='' then Scom:=' ';
+
+if Scom[1]=' ' then Scom[1]:='§';
+if Scom[1]<>'§' then Scom:='§'+Scom;
+
+if Scom[length(Scom)]=' ' then Scom[length(Scom)]:='§';
+if Scom[length(Scom)]<>'§' then Scom:=Scom+'§';    // '§'+Scom+'§'
+
+if length(Scom)<=3 then Scom:=' ';
+
+
+
+
+ //zoom
+if cut(Scom,'\',' ')='zoom' then
+   if nm(cut(Scom,' ','§'))>0 then
+      zoom:=nm(cut(Scom,' ','§'));
+
+
+ //->                                   /->n
+if cut(Scom,'\',' ')='->' then
+   begin
+
+   if (cut(Scom,' ','§')='n') then
+      begin
+      nR1:=Sx;
+      nR2:=Sy;
+      Sx:=V[nearest0(nR1,nR2,0,0)].cx;
+      Sy:=V[nearest0(nR1,nR2,0,0)].cy;
+      end;
+
+   if cut(Scom,' ','§')='b' then
+      begin
+      SumX:=0;
+      SumY:=0;
+      Numb:=0;
+      for i:=1 to D do
+          if V[i].alive then
+             begin
+             Numb:=Numb+1;
+             SumX:=SumX+V[i].cx;
+             SumY:=SumY+V[i].cy;
+             end;
+      Sx:=SumX/Numb;
+      Sy:=SumY/Numb;
+      end;
+
+   //Scom:='';
+   end;
+
+ //+                              \+ (-2.1,2.3) [100,100] '{goto(n)}' s=1 c1=9
+if (cut(Scom,'\',' ')='+') or (cut(Scom,'\','§')='+') then
+   begin
+
+   if Scom[length(Scom)]='§' then Scom[length(Scom)]:=' ';
+
+   if find_StrVal(Scom,'c')>0 then
+      begin
+      col1:=round(strVal(Scom,'s')) mod 16;
+      col2:=round(strVal(Scom,'c')) mod 16;
+      end
+      else
+      begin
+      col1:=15;
+      col2:=15;
+      end;
+
+   CooX:=strVal(Scom,'x');
+   CooY:=strVal(Scom,'y');
+
+   if find_StrVal(Scom,'x') * find_StrVal(Scom,'y') =0 then
+      begin
+      CooX:=Sx;
+      CooY:=Sy;
+      end;
+
+   tempRes:=strVal(Scom,'res');
+   if tempRes<=0 then tempRes:=0.5;
+   if tempRes>1 then tempRes:=1;
+
+   mass:=strVal(Scom,'m');
+   if mass<=0 then mass:=1;
+
+   charge:=strVal(Scom,'q');
+
+   //how mutch to spawn?
+   num:=trunc(strVal(Scom,'n'));
+   if num<1 then num:=1;
+   if num>D then num:=D;
+
+   //spawn num times
+   for i:=1 to num do
+      if nextfree>0 then        // <=D ?
+         set_( nextfree , trunc(strVal(Scom,'s')) , CooX , CooY , nm(cut(Scom,'[',',')) , nm(cut(Scom,',',']')) , tempRes , mass , charge , cut(Scom,'''','''') , col1 , col2 );
+
+   Scom:='';         reportln;
+   end;
+
+
+ //-                                 clear commands
+if (cut(Scom,'\','§')='-') then
+   begin
+
+   for i:=1 to D do
+       if V[i].alive then
+          if V[i].slc then
+             V[i].com:='';
+
+   end;
+
+
+ //* {goto(n)}                                add commands
+if (cut(Scom,'\',' ')='*') then
+   begin
+
+   sAux:=cut(Scom,' ','§');
+
+   for i:=1 to D do
+       if V[i].alive then
+          if V[i].slc then
+             V[i].com:=sAux;
+
+   Scom:='';
+   end;
+
+
+
+ //s=1
+if (cut(Scom,'\',' ')='s') then
+   begin
+
+   num:=trunc(nm(cut(Scom,' ','§')));
+   //if num<0 then num:=-num;
+
+   for i:=1 to D do
+       if V[i].alive then
+          if V[i].slc then
+             V[i].side:=num;
+
+   Scom:='';
+   end;
+
+
+
+//seleziona la ptc + vicina       wip
+if cut(Scom,'\','§')='n' then
+   begin
+   if V[nearest0(Sx,Sy,0,0)].slc then
+      V[nearest0(Sx,Sy,0,0)].slc:=false
+      else
+      V[nearest0(Sx,Sy,0,0)].slc:=true;
+   Scom:='';
+   end;
+
+                                                  //selections
+//seleziona tutte le particelle    wip
+if cut(Scom,'\','§')='A' then
+   begin
+   for i:=1 to D do
+       if V[i].alive then
+          V[i].slc:=true;
+   Scom:='';
+   end;
+
+//DEseleziona tutte le particelle    wip
+if cut(Scom,'\','§')='U' then
+   begin
+   for i:=1 to D do
+       if V[i].alive then
+          V[i].slc:=false;
+   Scom:='';
+   end;
+
+//inverti la selezione di tutte le particelle    wip
+if cut(Scom,'\','§')='I' then
+   begin
+   for i:=1 to D do
+       if V[i].alive then
+          if V[i].slc then
+             V[i].slc:=false
+             else
+             V[i].slc:=true;
+   Scom:='';
+   end;
+
+
+//kill all selected particles
+if (cut(Scom,'\','§')='x') or (cut(Scom,'\','§')='X') then
+   begin
+   for i:=1 to D do
+      if V[i].alive then
+         if V[i].slc then
+            VetClrI(i);
+   Scom:='';
+   end;
+
+
+//kill all particles
+if cut(Scom,'\','§')='clear' then
+   begin
+   for i:=1 to D do
+      if V[i].alive then
+         VetClrI(i);
+   Scom:='';
+   end;
+
+
+//segui una data particella (CAMERA)            \follow on
+if cut(Scom,'\',' ')='follow' then
+   begin
+
+   if cut(Scom,' ','§')='on' then
+      followed:=nearest0(Sx,Sy,0,0);
+   if cut(Scom,' ','§')='off' then
+      followed:=0;
+
+   Scom:='';
+
+   end;
+
+
+// gravy on/off
+if cut(Scom,'\',' ')='gravy' then
+   begin
+
+   if cut(Scom,' ','§')='on' then
+      Bgravy:=true;
+   if cut(Scom,' ','§')='off' then
+      Bgravy:=true;
+
+   end;
+
+
+// charge on/off
+if cut(Scom,'\',' ')='charge' then
+   begin
+
+   if cut(Scom,' ','§')='on' then
+      Bcharge:=true;
+   if cut(Scom,' ','§')='off' then
+      Bcharge:=true;
+
+   end;
+
+
+
+// goto that coo                     \-> (@1,0)
+if cut(Scom,'\',' ')='->' then
+   begin
+   if length(cut(Scom,'(',','))*length(cut(Scom,',',')'))>0 then
+      begin                          //coo x y
+
+      if cut(Scom,'(',',')[1]<>'@' then
+         Sx:=nm(cut(Scom,'(',','));
+
+      if cut(Scom,',',')')[1]<>'@' then
+         Sy:=nm(cut(Scom,',',')'));
+
+      if cut(Scom,'(',',')[1]='@' then
+         begin
+         sAux:=cut(Scom,'(',',');
+         sAux:=cut(sAux+'§','@','§');
+         Sx:=Sx+nm(sAux);
+         end;
+
+      if cut(Scom,',',')')[1]='@' then
+         begin
+         sAux:=cut(Scom,',',')');
+         sAux:=cut(sAux+'§','@','§');
+         Sy:=Sy+nm(sAux);
+         end;
+
+      end
+      else
+      if (trunc(nm(cut(Scom,' ','§')))>0) and (trunc(nm(cut(Scom,' ','§')))<=D) then
+         begin                                      // coo ptc
+         Sx:=V[trunc(nm(cut(Scom,' ','§')))].cx;
+         Sy:=V[trunc(nm(cut(Scom,' ','§')))].cy;
+         end;
+
+   Scom:='';
+
+   end;
+
+
+// show details of the ptc;
+if (cut(Scom,'\','§')=':') or (cut(Scom,'\',' ')=':') then
+   begin
+   i:=nearest0(sx,sy,0,0);
+   clrscr;
+   cursoroff;
+   with V[i] do
+      begin
+      centra(st(i)+'    ['+st(V[i].side)+']   {'+cut(V[i].com,'{','}')+'}',5,15);
+      centra(V[i].com,7,15);
+      centra('  coo ( '+st(V[i].cx)+' , '+st(V[i].cy)+' )',11,15);
+      centra('  vet ( '+st(V[i].vx)+' , '+st(V[i].vy)+' )',13,15);
+      centra('  mass = '+st(V[i].m),16,15);
+      centra('  charge = '+st(V[i].q),18,15);
+      centra('  dir = '+st(V[i].dir),20,15);
+      centra(' rest = '+st(V[i].res),22,15);
+      end;
+   readln;
+   clrscr;
+   Scom:='';
+   goto gotoPlay;
+   end;
+
+
+// show details of the ptc
+if cut(Scom,'\','§')='clone' then
+   begin
+   for i:=1 to D do if V[i].alive then if V[i].slc then
+      set_( nextfree , V[i].side , V[i].cx , V[i].cy , V[i].vx , V[i].vy , V[i].res , V[i].m , V[i].q , V[i].com , V[i].col1 , V[i].col2 );
+   Scom:='';
+   goto gotoPlay;
+   end;
+
+
+// re-execute last txt                               //before exe!
+if cut(Scom,'\','§')='reexe' then
+   begin
+   if length(lastPath)>0 then
+      Scom:='\exe "'+lastPath+'"';
+   end;
+
+
+// execute the InPut file
+if cut(Scom,'\','§')='exe' then
+   begin
+
+   assign(fl,percorso+'\Impulse\InPut.txt');
+   reset(fl);
+
+   while not eof(fl) do
+      begin
+      readln(fl,Scom);
+      if Scom[1]<>'\' then Scom:='\'+Scom;
+      exeScom;
+      end;
+
+   close(fl);
+
+   end;
+
+
+// execute a generic file       (same as exe)
+if cut(Scom,'\',' ')='exe' then
+   begin
+
+   path:=cut(Scom,'"','"'); 
+   if path<>'' then
+      lastPath:=path;
+   assign(fl,path);
+   reset(fl);
+
+   while not eof(fl) do
+      begin
+      readln(fl,Scom);
+      if Scom[1]='\' then 
+         exeScom;
+      end;
+
+   path:='';
+   close(fl);
+
+   end;
+
+
+// report graf
+if cut(Scom,'\','§')='report graf' then
+   begin
+
+   reportln;
+   report('----------------');
+   report('');
+   report('   Report of: graph values [1-100] (1=nearest, 100=farest)   at '+st(T));
+   report('');
+   for i:=1 to 100 do
+      report(st(freq[i]));
+   report('');
+   report('----------------');
+   reportln;
+
+   Scom:='';
+
+   end;
+
+
+// report side
+if cut(Scom,'\','§')='report sides' then
+   begin
+
+   reportSide;
+
+   Scom:='';
+
+   end;
+
+
+// set DoGraf on                                   set all from console
+if cut(Scom,'\','§')='graf' then
+   begin
+   DoGraf:=not DoGraf;
+   Scom:='';
+   end;
+
+
+// set T0
+if cut(Scom,'\',' ')='T0' then
+   begin
+   if nm(cut(Scom,' ','§'))>0 then
+      T0:=nm(cut(Scom,' ','§'));
+   Scom:='';
+   end;
+
+
+// set Time
+if (cut(Scom,'\',' ')='T') or (cut(Scom,'\',' ')='t') or (cut(Scom,'\',' ')='time') then
+   begin
+   if nm(cut(Scom,' ','§'))>=0 then
+      T:=nm(cut(Scom,' ','§'));
+   gotoxy(2,2);
+   write(T:1:3,'   ');
+   pausa:=true;
+   Scom:='';
+   end;
+
+
+// scia
+if cut(Scom,'\','§')='trail' then
+   begin
+   BpictureMode:=not BpictureMode;
+   Scom:='';
+   end;
+
+
+// urti
+if cut(Scom,'\',' ')='urti' then
+   begin
+   if cut(Scom,' ','§')='on' then
+      Burti:=true;
+   if cut(Scom,' ','§')='off' then
+      Burti:=false;
+   Scom:='';
+   end;
+
+
+// play
+if cut(Scom,'\','§')='play' then
+   begin
+   Scom:='';
+   pausa:=false;
+   goto gotoPlay;
+   end;
+
+
+// string
+{if cut(Scom,'\',' ')='string' then
+   begin
+
+   num:=trunc(nm(cut(Scom,' ','§')));
+   if num<3 then num:=3;
+
+   ang:=2*PI/num;
+
+   nR0:=sqrt(1/(4*tan(ang))+1);
+
+   for i:=1 to num do
+      begin
+      set_( cos(ang*i) , sin(ang*i) );
+      end;
+
+   Scom:='';
+   goto gotoPlay;
+   end;              }
+
+
+
+end;      //fine scom
+
+
+
+
+
+ //prendi comando
+procedure TakeCom;
+begin
+
+Ccom:=chr(0);
+
+      if keypressed then
+         if not pressed then
+            begin
+            pressed:=true;
+            Ccom:=readkey;          //comando
+
+            if Ccom='\' then
+               begin
+               readScom(14);
+               ExeScom;
+               end;
+
+            end
+         else
+         if pressed then pressed:=false;
+
+      if not pressed then Ccom:=chr(0);
+
+
+ //----- assegnazione effetti comandi da tastiera (non in pausa) -----
+
+//pausa
+if Ccom=chr(27)then
+   if pausa then
+   begin
+   pausa:=false;
+   gotoxy(30,15);
+   clreol;
+   gotoxy(1,11);
+   clreol;
+   end
+   else
+   begin
+   pausa:=true;
+   end;
+
+
+ //var time
+if Ccom='[' then
+   t0:=t0/2;
+if Ccom=']' then
+   t0:=t0*2;
+
+
+ //picture mod (show plot)
+if (Ccom='p') or (Ccom='P') then
+   BpictureMode:=not BpictureMode;
+
+
+
+     //muovi
+     if (Ccom='w') or (Ccom='W') then
+        sy:=sy+128/zoom;
+
+     if (Ccom='a') or (Ccom='A') then
+        sx:=sx-128/zoom;
+
+     if (Ccom='d') or (Ccom='D') then
+        sx:=sx+128/zoom;
+
+     if (Ccom='s') or (Ccom='S') then
+        sy:=sy-128/zoom;
+
+
+     //muovi  con pad numerico
+     if (Ccom='8') then
+        sy:=sy+min(DscrX,DscrY)/(zoom*8);
+
+     if (Ccom='4') then
+        sx:=sx-min(DscrX,DscrY)/(zoom*8);
+
+     if (Ccom='6') then
+        sx:=sx+min(DscrX,DscrY)/(zoom*8);
+
+     if (Ccom='2') then
+        sy:=sy-min(DscrX,DscrY)/(zoom*8);
+
+
+     //zoom
+     if Ccom='>' then
+        begin
+        zoom:=zoom*2;
+        if zoom>1024 then zoom:=1024;
+        end;
+     if Ccom='<' then
+        begin
+        zoom:=zoom/2;
+        end;
+
+
+     //Scom----------     gestione comandi utente
+
+ExeScom;
+
+
+end;
+
+
+
+//comando numero n                                     wip add '{ filter
+function comN(s:string; n:integer):shortstring;
+var
+   i,j,k:integer;
+begin
+
+comN:='';
+
+k:=0;
+for i:=1 to length(s) do
+   begin
+   if s[i]='{' then k:=k+1;
+   if k=n then break;
+   end;
+
+if i<length(s) then
+   begin
+   for j:=i+1 to length(s) do
+      if s[j]='}' then break;       //   bosaDog
+   comN:=copy(s,i,j-i+1);           //     34     copy('bosaDog',3,2)
+
+   end;
+
+end;
+
+
+ //elimina comando (all'inizio)
+procedure cutCom(n:integer);
+var i:integer;
+begin
+if V[n].com<>'' then
+   begin
+   i:=1;
+   while (V[n].com[1]<>'}') and (length(V[n].com)>1) do
+         begin
+         delete(V[n].com,1,1);
+         i:=i+1;
+         end;
+   if V[n].com[1]='}' then delete(V[n].com,1,1);
+   end;
+end;
+                                               //about command
+
+ //prossimo comando     {1}{2}  nextCom={1}
+function nextCom(i:integer):shortstring;
+begin
+nextcom:='';
+if V[i].alive then
+  nextcom:='{'+cut(V[i].com,'{','}')+'}';
+end;
+
+
+ //chiave del comando          {goto(n)} key=goto
+function key(s:string):shortstring;
+var
+   i:integer;
+   sg:string;
+begin
+key:='';
+sg:=cut(s,'{','}');
+for i:=1 to length(sg) do
+   if (sg[i]='(') or (sg[i]='[') or (sg[i]='{') or (sg[i]='_') or (sg[i]=' ') then
+      break
+      else
+      key:=key+sg[i];
+end;
+
+
+
+
+
+ {### Procedure madre ###}
+
+
+
+ //--------------------------   | Fisiche |   ----------------------------------
+
+
+procedure Physics(Time0,Gravy:real); //                                         #OptiFined
+var
+   i,j,target:integer;
+   dst,ang,frc,rAux:real;     //distamza, angolo, forza
+   sAux:string;          //stringa aux
+begin
+
+for i:=1 to D do if V[i].alive then       //salva vettore per aumentare precisione collisione
+   begin
+   V[i].lvx:=V[i].vx;
+   V[i].lvy:=V[i].vy;
+   end;
+
+
+for i:=1 to D do if V[i].alive then
+   begin
+   V[i].lcx:=V[i].cx;
+   V[i].lcy:=V[i].cy;
+   end;
+
+
+
+  // ----- Physics - collision section -----
+
+
+
+if Burti then for i:=1 to D do if V[i].alive then              //   "i" subisce la collisione
+   begin
+
+   for j:=1 to D do
+      if V[j].alive then
+         if i<>j then     //not theirselves
+         begin
+
+         frc:=0;
+
+         //calcola DISTANZA
+         dst:=dist(V[i].cx,V[i].cy,V[j].cx,V[j].cy);
+
+         if (dst>0) and (dst+Prec<=1) then   //se collidono
+            begin
+
+            ang := angTan( V[j].cx,V[j].cy,V[i].cx,V[i].cy );
+
+            frc := PvPfrc( V[i].cx,V[i].cy,V[i].lvx,V[i].lvy,V[j].cx,V[j].cy,V[j].lvx,V[j].lvy ) /sqrt(2);
+
+            if frc>0 then
+               begin
+               V[i].vx:= frc * cos( ang );
+               V[i].vy:= frc * sin( ang );
+               end;
+
+            //urto
+            if PvPfrc( V[i].cx,V[i].cy,V[i].lvx,V[i].lvy,V[j].cx,V[j].cy,V[j].lvx,V[j].lvy ) >0 then
+               begin
+
+               // CALC vettore dopo urto
+
+               frc := PvPf( V[i].cx,V[i].cy,V[j].lvx,V[j].lvy,V[j].cx,V[j].cy );     //wip     *V[i].res*V[j].res
+               ang := angTan( V[j].cx,V[j].cy,V[i].cx,V[i].cy );
+
+               if frc>0 then
+                  begin
+                  V[i].vx := frc * cos( ang );
+                  V[i].vy := frc * sin( ang );
+                  end;
+
+               end;
+
+               //procedura di allontanamento particellare
+            dst:=dist(V[i].cx,V[i].cy,V[j].cx,V[j].cy);
+            while dst<1-Prec*4 do
+               begin
+
+               V[i].cx:=V[i].cx+cos(ang)*Prec;
+               V[i].cy:=V[i].cy+sin(ang)*Prec;
+
+               V[j].cx:=V[j].cx-cos(ang)*Prec;
+               V[j].cy:=V[j].cy-sin(ang)*Prec;
+
+               V[i].vx:=V[i].vx+cos(ang)/dst;
+               V[i].vy:=V[i].vy+sin(ang)/dst;
+
+               V[j].vx:=V[j].vx-cos(ang)/dst;
+               V[j].vy:=V[j].vy-sin(ang)/dst;
+
+               dst:=dist(V[i].cx,V[i].cy,V[j].cx,V[j].cy);
+               end;
+
+            end;
+
+         end;
+
+   end;
+
+
+
+  //---   calcola gravità   ----------------------------------------------------
+
+
+if Bgravy then for i:=1 to D do
+   if V[i].alive then
+      begin
+      for j:=1 to D do if V[j].alive then if i<>j then
+        begin
+
+        ang:=PI+angTan(0,0,V[i].cx-V[j].cx,V[i].cy-V[j].cy);
+        dst:=dist(V[i].cx,V[i].cy,V[j].cx,V[j].cy);
+
+        if dst>0 then
+           frc:=V[j].m*Gravy/sqrt(dst)*sqr(Time0)       // formula
+           else
+           frc:=0;
+
+        if dst>0 then
+           begin
+           V[i].vx:=V[i].vx+cos(ang)*frc;
+           V[i].vy:=V[i].vy+sin(ang)*frc;
+           end;
+
+        end;           //t0?
+      end;
+
+
+
+
+  //---   calcola carica   ----------------------------------------------------
+
+
+if Bcharge then for i:=1 to D do
+   if V[i].alive then
+      begin
+      for j:=1 to D do if V[j].alive then if i<>j then
+        begin
+
+        ang:=PI+angTan(0,0,V[i].cx-V[j].cx,V[i].cy-V[j].cy);
+        dst:=dist(V[i].cx,V[i].cy,V[j].cx,V[j].cy);
+
+        if dst>0 then
+           frc:=-Qconst*V[i].q*V[j].q/sqrt(dst)*sqr(Time0)       // formula
+           else
+           frc:=0;
+
+        if dst>0 then
+           begin
+           V[i].vx:=V[i].vx+cos(ang)*frc;
+           V[i].vy:=V[i].vy+sin(ang)*frc;
+           end;
+
+        end;
+      end;
+
+
+
+  //---   esegui comandi particellari   ----------------------------------------
+
+
+for i:=1 to D do if V[i].alive then
+   begin
+
+
+// {follow(n) s=10 r=10 } ----------------
+if key(nextcom(i))='follow' then
+   begin
+
+   if cut(V[i].com,'(',')')='n' then
+      begin
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+      if target=0 then cutCom(i);
+
+      if target>0 then
+         begin
+         ang:=angTan(V[i].cx,V[i].cy,V[target].cx,V[target].cy);
+         dst:=ptcDist(i,target);
+         frc:=strVal(V[i].com,'f');
+         if frc=0 then frc:=sqr(dst)*4;
+         V[i].vx:=V[i].vx+cos(ang)*frc;
+         V[i].vy:=V[i].vy+sin(ang)*frc;
+         if dst<=1 then
+            begin
+            V[i].vx:=V[j].vx;
+            V[i].vy:=V[j].vy;
+            end;
+         end;
+      end;
+
+   if cut(V[i].com,'(',')')='me' then
+      begin
+
+      if target>0 then
+         begin
+         ang:=angTan(V[i].cx,V[i].cy,Sx,Sy);
+         dst:=dist(V[i].cx,V[i].cy,Sx,Sy);
+         frc:=strVal(V[i].com,'f');
+         if frc=0 then frc:=sqr(dst)*4;
+         V[i].vx:=V[i].vx+cos(ang)*frc;
+         V[i].vy:=V[i].vy+sin(ang)*frc;
+         end;
+      end;
+
+   end;
+
+// ----------------
+
+
+// {!follow(n)} ----------------
+if key(nextcom(i))='!follow' then
+   begin
+
+   if cut(V[i].com,'(',')')='n' then
+      begin
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+      if target=0 then cutCom(i);
+
+      if target>0 then
+         begin
+
+         sAux:='{follow(n)';
+         sAux:=sAux+'['+cut(nextcom(i),'[',']')+']';
+         if strVal(nextcom(i),'r')>0 then
+         sAux:=sAux+' r='+st(strVal(nextcom(i),'r'))+' ';
+         sAux:=sAux+'}';
+
+         addCom(target,sAux);
+         end;
+
+      end;
+
+   cutCom(i);    //cut at first try
+
+   end;
+
+// ----------------
+
+
+
+// {escape(n) s=10 r=10 } ----------------
+if key(nextcom(i))='escape' then
+   begin
+
+   if cut(V[i].com,'(',')')='n' then
+      begin
+      dst:=strVal(V[i].com,'r');
+      if dst<=1 then dst:=1;
+      target:=nearest( V[i].cx , V[i].cy , dst , trunc(nm(cut(V[i].com,'[',']'))) );
+
+      if target=0 then cutCom(i);
+
+      if target>0 then
+         begin
+         ang:=PI+angTan(V[i].cx,V[i].cy,V[target].cx,V[target].cy);          //reverse ang
+         dst:=dist(V[i].cx,V[i].cy,V[target].cx,V[target].cy);
+         frc:=strVal(V[i].com,'f');
+         if frc=0 then frc:=sqr(dst+1);
+         V[i].vx:=V[i].vx+cos(ang)*frc;
+         V[i].vy:=V[i].vy+sin(ang)*frc;
+         end;
+
+      if ptcDist(i,target)>dst then cutcom(i);
+
+      end;
+
+   end;
+
+// ----------------
+
+
+
+// {goto(n)[1] r=9 }  ----------------
+if key(nextcom(i))='goto' then
+   begin
+
+   if cut(nextCom(i),'(',')')='n' then
+      begin
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+      if target=0 then cutCom(i);
+
+      if target>0 then
+         begin
+         ang:=angTan(V[i].cx,V[i].cy,V[target].cx,V[target].cy);
+         dst:=dist(V[i].cx,V[i].cy,V[target].cx,V[target].cy);
+         frc:=strVal(nextCom(i),'f');
+         if frc=0 then frc:=sqrt(dst)*32;          //wip force
+         V[i].vx:=V[j].vx+cos(ang)*frc;
+         V[i].vy:=V[j].vy+sin(ang)*frc;
+
+         if distP(i,target)<=1 then cutCom(i);
+         end;
+
+      end;
+
+   end;
+
+// ----------------
+
+
+// {approach(n) r=9 }  ----------------
+if key(nextcom(i))='approach' then
+   begin
+
+   if cut(nextCom(i),'(',')')='n' then
+      begin
+      target:=nearest( V[i].cx , V[i].cy , 0 , trunc(nm(cut(V[i].com,'[',']'))) );
+
+      if target=0 then cutCom(i);
+
+      if target>0 then
+         begin
+         ang:=angTan(V[i].cx,V[i].cy,V[target].cx,V[target].cy);
+         dst:=dist(V[i].cx,V[i].cy,V[target].cx,V[target].cy);
+         frc:=strVal(nextCom(i),'f');
+         if frc=0 then frc:=sqrt(dst)*32;          //wip force
+         V[i].vx:=V[j].vx+cos(ang)*frc;
+         V[i].vy:=V[j].vy+sin(ang)*frc;
+
+         if distP(i,target)<=strVal(V[i].com,'r') then cutCom(i);
+         end;
+
+      end;
+
+   end;
+
+// ----------------
+
+
+
+// {!goto(n)} ----------------
+if key(nextcom(i))='!goto' then
+   begin
+
+   if cut(V[i].com,'(',')')='n' then
+      begin
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+      if target>0 then
+         begin
+
+         sAux:='{goto(n)';
+         sAux:=sAux+'['+cut(nextcom(i),'[',']')+']';
+         if strVal(nextcom(i),'r')>0 then
+         sAux:=sAux+' r='+st(strVal(nextcom(i),'r'))+' ';
+         sAux:=sAux+'}';
+
+         addCom(target,sAux);
+         end;
+
+      end;
+
+   cutCom(i);    //cut at first try
+
+   end;
+
+// ----------------
+
+
+// {random(0)}  ----------------
+if key(nextcom(i))='random' then
+   begin
+
+   rAux:=nm(cut(nextcom(i),'(',')'));
+   if rAux<=0 then rAux:=1;
+   rAux:=rAux*T0;
+
+   V[i].vx:=V[i].vx+(random-random)*rAux;
+   V[i].vy:=V[i].vy+(random-random)*rAux;
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+
+// {side[10]}  ----------------
+if key(nextcom(i))='side' then
+   begin
+
+   if cut(V[i].com,'(',')')='' then
+      V[i].side:=0
+      else
+      V[i].side:=trunc(nm(cut(V[i].com,'(',')')));
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {!side[10]}  ----------------           order
+if key(nextcom(i))='!side' then
+   begin
+
+   target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   if cut(V[i].com,'(',')')='' then
+      V[target].side:=0
+      else
+      V[target].side:=trunc(nm(cut(V[i].com,'(',')')));
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {clone}  ----------------
+if key(nextcom(i))='clone' then
+   begin
+
+   if cut(nextcom(i),'{','}')='clone' then
+      target:=i
+      else
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   set_( nextfree , V[target].side , V[target].cx , V[target].cy , 0 , 0 , V[target].res , V[target].m , V[i].q , '{}'+V[target].com , V[target].col1 , V[target].col2 );
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {copy}  ----------------
+if key(nextcom(i))='copy' then
+   begin
+
+   target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   //V[i].side:=V[target].side;
+   V[i].com:=V[target].com;
+   //V[i].col1:=V[target].col1;
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {paste(n)}  ----------------
+if key(nextcom(i))='paste' then
+   begin
+
+   cutcom(i);
+
+   target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   //V[target].side:=V[i].side;
+   V[target].com:=V[i].com;
+   //V[target].col1:=V[i].col1;
+
+   end;
+
+// ----------------
+
+
+// {cut(n)}  ----------------      o cut
+if key(nextcom(i))='cut' then
+   begin
+
+   if cut(nextcom(i),'{','}')='cut' then
+      target:=i
+      else
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   cutcom(target);
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {infect(n)}  ----------------
+if key(nextcom(i))='infect' then
+   begin
+
+   cutcom(i);
+
+   target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   V[target].side:=V[i].side;
+   V[target].com:=V[i].com;
+   V[target].col2:=V[i].col2;
+
+   end;
+
+// ----------------
+
+
+// {!copy}  ----------------
+if key(nextcom(i))='!copy' then
+   begin
+
+   target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   V[target].com:=V[i].com;
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {!infect(n)}  ----------------
+if key(nextcom(i))='!infect(n)' then
+   begin
+
+   if strVal(V[i].com,'r')=0 then
+      target:=nearest( V[i].cx , V[i].cy , 1 , trunc(nm(cut(V[i].com,'[',']'))) )
+      else
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+   V[target].side:=V[i].side;
+   V[target].com:=V[i].com;
+   V[target].col1:=V[i].col1;
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {repeat(1,4)}  ----------------
+if key(nextcom(i))='repeat' then
+   begin
+
+   for j:=trunc(nm(cut(V[i].com,'(',','))) to trunc(nm(cut(V[i].com,',',')'))) do
+      V[i].com:=V[i].com+comN(V[i].com,j);
+
+   cutcom(i);
+
+   end;
+
+// ----------------
+
+
+// {stop}  ----------------
+if key(nextcom(i))='stop' then
+   begin
+   V[i].vx:=0;
+   V[i].vy:=0;
+   end;
+
+
+// {kill(n)}  ----------------
+if key(nextcom(i))='kill' then
+   begin
+
+   if cut(nextcom(i),'(',')')='' then
+      kill(i);
+
+   if cut(nextcom(i),'(',')')='n' then
+      begin
+      target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+         dst:=dist(V[i].cx,V[i].cy,V[target].cx,V[target].cy);
+      if strVal(nextCom(i),'r')>0 then
+         if dst<strVal(nextCom(i),'r') then kill(target);
+      if strVal(V[i].com,'r')=0 then
+         if dst<=1 then kill(target);
+      end;
+
+   cutcom(i);
+
+   end;
+
+
+// {wait(10)}
+if key(nextcom(i))='wait' then
+   begin
+
+   if random(trunc(nm(cut(nextcom(i),'(',')'))))=1 then cutcom(i);
+
+   end;
+
+
+// {pulse}  ----------------         do something in condition of "pulse"    {goto(n)[pulse]}
+if key(nextcom(i))='pulse' then
+   begin
+
+   V[i].imp:=not V[i].imp;
+
+   cutcom(i);
+
+   end;
+
+
+// {impulse}  ----------------     {impulse[1] r=4 }    do impulse if nearest [1] is side 1
+if key(nextcom(i))='impulse' then
+   begin
+
+   if strVal(nextCom(i),'r')>0 then
+      begin
+      target:=nearest( V[i].cx , V[i].cy , nm(cut(nextCom(i),'[',']')) , round(strVal(nextCom(i),'r')) );
+      if target>0 then
+         V[i].imp:=true
+         else
+         V[i].imp:=false;
+      end;
+
+   cutcom(i);
+
+   end;
+
+
+
+// {}  ----------------
+if key(nextcom(i))='' then
+   begin
+
+   if length(V[i].com)>0 then
+      cutcom(i);
+
+   end;
+
+
+
+
+// ----------------
+
+ end;
+
+
+
+
+ //---   risolvi vettore forza   -----------------------------------------------
+
+
+for i:=1 to D do if V[i].alive then if (V[i].vx<>0) or (V[i].vy<>0) then     //risolvi                    //WIP
+    begin
+
+    if Attrito<>1 then
+       begin
+       V[i].vx:=V[i].vx*Attrito;
+       V[i].vy:=V[i].vy*Attrito;
+       end;
+
+    ang:=angTan(0,0,V[i].vx,V[i].vy);
+    frc:=risult(V[i].vx,V[i].vy);
+
+    V[i].dir:=-angTan(V[i].lcx,V[i].lcy,V[i].cx,V[i].cy);
+    if Time0>0 then
+       V[i].vel:=dist(V[i].cx,V[i].cy,V[i].lcx,V[i].lcy)/Time0;
+
+
+    dst:=Time0*(V[i].vel+Time0*frc/(2*V[i].m));   //spazio percorso             formula Kothc
+
+
+
+    V[i].lcx:=V[i].cx;
+    V[i].lcy:=V[i].cy;
+
+    V[i].cx:=V[i].cx+cos(ang)*dst;
+    V[i].cy:=V[i].cy+sin(ang)*dst;
+
+    end;
+
+    T:=T+T0;
+
+ //-----------------------------------------------------------------------------
+
+
+end;  //---   fine   ---------------------------------------------------
+
+
+
+
+
+
+procedure PrintAPlus(x,y:integer);
+begin
+   if (x>1) and (x<DscrX) and (y>1) and (y<DscrY) then
+      begin                     //+
+      Screen[x+1,y  ,0]:=10;
+      Screen[x  ,y+1,0]:=10;
+      Screen[x  ,y  ,0]:=10;
+      Screen[x  ,y-1,0]:=10;
+      Screen[x-1,y  ,0]:=10;
+      end;
+end;
+
+
+
+
+ //print pixel map on screen                                                    #OptiFined
+procedure Show;
+var
+   i,j,i1,j1,x,y,xx,yy:integer;
+   a,r,dst:real;           //angle, raduis of points
+begin
+
+
+ // ---------- Carica mappa ----------
+
+
+if fileVal('global\PtcPX','ParticlePX')>0 then
+   ParticlePX:=trunc(fileVal('global\PtcPX','ParticlePX'))
+   else
+   ParticlePX:=3;
+
+if not BpictureMode then
+clrScreen(1);
+
+//follow
+if followed>0 then
+   begin
+   Sx:=V[followed].cx;
+   Sy:=V[followed].cy;
+   end;
+
+
+//selection points
+
+if (areaType='1') then
+   begin
+
+   Ax2:=sx; Ay2:=sy;
+
+   //default
+   x:=round( ( Ax1-sx+DscrX/(2*zoom)) *zoom );
+   y:=round( (-Ay1+sy+DscrY/(2*zoom)) *zoom );
+   printAPlus(x,y);
+
+   //default
+   x:=round( ( Ax2-sx+DscrX/(2*zoom)) *zoom );
+   y:=round( (-Ay2+sy+DscrY/(2*zoom)) *zoom );
+   if (x>1) and (x<DscrX) and (y>1) and (y<DscrY) then
+      printAPlus(x,y);
+
+   //rect
+   if (Ax1<>Ax2) and (Ay1<>Ay2) then
+      begin
+      x:=round( ( Ax2-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1+sy+DscrY/(2*zoom)) *zoom );
+      if (x>1) and (x<DscrX) and (y>1) and (y<DscrY) then
+         printAPlus(x,y);
+      x:=round( ( Ax1-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay2+sy+DscrY/(2*zoom)) *zoom );
+      if (x>1) and (x<DscrX) and (y>1) and (y<DscrY) then
+         printAPlus(x,y);
+      end;
+
+   //circle
+   if (Ax1=Ax2) or (Ay1=Ay2) then
+      begin
+      dst:=dist(Ax1,Ay1,Ax2,Ay2);
+
+
+      x:=round( ( Ax1+dst-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+      x:=round( ( Ax1-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1+dst+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+      x:=round( ( Ax1-dst-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+      x:=round( ( Ax1-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1-dst+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+
+      x:=round( ( Ax1+dst/sqrt(2)-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1+dst/sqrt(2)+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+      x:=round( ( Ax1+dst/sqrt(2)-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1-dst/sqrt(2)+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+      x:=round( ( Ax1-dst/sqrt(2)-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1+dst/sqrt(2)+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+      x:=round( ( Ax1-dst/sqrt(2)-sx+DscrX/(2*zoom)) *zoom );
+      y:=round( (-Ay1-dst/sqrt(2)+sy+DscrY/(2*zoom)) *zoom );
+      printAPlus(x,y);
+
+
+      end;
+
+   end;
+
+
+
+for i:=1 to D do
+
+    if (V[i].alive) then
+       begin
+
+       xx:=round( (V[i].cx-sx+DscrX/(2*zoom)) *zoom ); //centro x
+       yy:=round( (-V[i].cy+sy+DscrY/(2*zoom)) *zoom );  //centro y   ( "-" perchè il piano dal PC inverte le y )
+
+
+       if not V[i].slc then              //deselect
+          V[i].col1:=15;
+
+       if (not (V[i].imp)) and (not (V[i].slc)) then
+          case V[i].side mod 8 of
+             0: V[i].col1:=15;
+             1: V[i].col1:=9;
+             2: V[i].col1:=10;
+             3: V[i].col1:=14;
+             4: V[i].col1:=12;
+             5: V[i].col1:=4;
+             6: V[i].col1:=5;
+             7: V[i].col1:=13;
+             end;              //side colors  }
+
+       if V[i].imp then                  //impulse
+          V[i].col1:=11;
+
+       if V[i].slc then                  //select
+          V[i].col1:=10;
+
+
+
+
+             //                                                                 t7 pixel
+              if Ntexture=7 then
+                 begin//--------------------
+                 if (xx>=1) and (xx<=DscrX) and (yy>=1) and (yy<=DscrY) then
+                    if random(2)=0 then
+                       Screen[xx,yy,0]:=V[i].col1
+                       else
+                       Screen[xx,yy,0]:=V[i].col2;
+                 end;//--------------------
+              //
+
+
+          if V[i].imp then V[i].col2:=11;
+
+
+
+       //textures
+
+       if zoom<1 then      //con/senza textures
+          begin
+          if (xx>=1) and (xx<=DscrX) and (yy>=1) and (yy<=DscrY) then
+             if random<zoom then             //diradata
+                Screen[xx,yy,0]:=V[i].col1
+                else
+                Screen[xx,yy,0]:=V[i].col2;
+          end
+          else
+          begin
+
+          //particle textures         // TEXTURE PACK  (textures)
+
+
+
+          V[i].dir:=-angTan(V[i].lcx,V[i].lcy,V[i].cx,V[i].cy);
+
+          for j:=1 to round(zoom*particlePX) do
+              begin
+              //                                                                t0  poligonal circle
+              if Ntexture=0 then
+                 begin//--------------------
+                 //r:=round(zoom/2);
+                 a:=2*PI*j/round(zoom*particlePX);   //angle
+                 r:=1/2;   //radius
+                 if V[i].imp then
+                    r:=sqr(random)*r;
+                 x:=xx+round(cos(a)*zoom*r);
+                 y:=yy+round(sin(a)*zoom*r);
+                 if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                    if random(2)=0 then
+                       Screen[x,y,0]:=V[i].col1
+                       else
+                       Screen[x,y,0]:=V[i].col2;
+                 end;//--------------------
+              //                                                                t1  pearl
+              if Ntexture=1 then
+                 begin//--------------------
+                 a:=random*2*PI;   //angle
+                 r:=(1-random*random*random)/2;   //radius
+                 x:=xx+round(cos(a)*zoom*r);
+                 y:=yy+round(sin(a)*zoom*r);
+                 if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                    if random(2)=0 then
+                       Screen[x,y,0]:=V[i].col1
+                       else
+                       Screen[x,y,0]:=V[i].col2;
+                 end;//--------------------
+              //                                                                t2  center
+              if Ntexture=2 then
+                 begin//--------------------
+                 a:=random*2*PI;   //angle
+                 r:=(random*random*random)/2;   //radius
+                 x:=xx+round(cos(a)*zoom*r);
+                 y:=yy+round(sin(a)*zoom*r);
+                 if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                    if random(2)=0 then
+                       Screen[x,y,0]:=V[i].col1
+                       else
+                       Screen[x,y,0]:=V[i].col2;
+                 end;//--------------------
+              //                                                                t3  dir
+              if Ntexture=3 then if random(3)=0 then
+                 begin//--------------------
+                 a:=-angTan(V[i].lcx,V[i].lcy,V[i].cx,V[i].cy);
+                 r:=random*dist(V[i].lcx,V[i].lcy,V[i].cx,V[i].cy);
+                 x:=xx+round(cos(a)*zoom*r/2);
+                 y:=yy+round(sin(a)*zoom*r/2);
+                 if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                 if random(2)=0 then
+                       Screen[x,y,0]:=V[i].col1
+                       else
+                       Screen[x,y,0]:=V[i].col2;
+                 end;//--------------------
+              //                                                                t4  link
+              if Ntexture=4 then
+                 begin//--------------------
+                 a:=random*PI*2;
+                 r:=sin(abs(a-PI)*2);
+                 if (V[i].cx<>V[i].lcx) or (V[i].cy<>V[i].lcy) then
+                    begin
+                    x:=xx+round(cos(a+V[i].dir)*zoom*r/2);
+                    y:=yy+round(sin(a+V[i].dir)*zoom*r/2);
+                    end
+                    else
+                    begin
+                    x:=xx+round(cos(a-angTan(0,0,V[i].cx,V[i].cy))*zoom*r/2);
+                    y:=yy+round(sin(a-angTan(0,0,V[i].cx,V[i].cy))*zoom*r/2);
+                    end;
+                 if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                 if random(2)=0 then
+                       Screen[x,y,0]:=V[i].col1
+                       else
+                       Screen[x,y,0]:=V[i].col2;
+                 end;//--------------------
+              //                                                                t5 coo - last coo
+              if Ntexture=5 then
+                 begin//--------------------
+                 a:=-angTan(V[i].cx,V[i].cy,V[i].lcx,V[i].lcy);
+                 r:=sqr(random)*risult(V[i].lcx-V[i].cx,V[i].lcy-V[i].cy);
+                 x:=xx+round(cos(a)*zoom*r/2);
+                 y:=yy+round(sin(a)*zoom*r/2);
+                 if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                 if random(2)=0 then
+                       Screen[x,y,0]:=V[i].col1
+                       else
+                       Screen[x,y,0]:=V[i].col2;
+                 end;//--------------------
+              //                                                                t6 vector direction
+              if Ntexture=6 then
+                 begin//--------------------
+                 a:=PI-angTan(0,0,V[i].vx,V[i].vy);
+                 r:=sqr(random)*sqrt(risult(V[i].vx,V[i].vy))/10;
+                 x:=xx+round(cos(a)*zoom*r/2);
+                 y:=yy+round(sin(a)*zoom*r/2);
+                 if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                 if random(2)=0 then
+                       Screen[x,y,0]:=V[i].col1
+                       else
+                       Screen[x,y,0]:=V[i].col2;
+                 end;//--------------------
+              //
+              end;
+          end;
+       Setcolor(10);
+       end;
+
+
+          j1:=128;
+
+          for j:=1 to j1 do
+             begin
+
+
+             if Npointer=1 then
+                begin//--------------------
+                r:=j/j1*16;
+                a:=Pi/2*(j mod 4);   //angle
+                x:=DscrX div 2+round(cos(a)*r);
+                y:=DscrY div 2+round(sin(a)*r);
+                if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                   Screen[x,y,0]:=10;
+                end;//--------------------
+
+
+             if Npointer=2 then
+                begin//--------------------
+                r:=8+j/j1*16;
+                a:=Pi/2*(j mod 4);   //angle
+                x:=DscrX div 2+round(cos(a)*r);
+                y:=DscrY div 2+round(sin(a)*r);
+                if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                   Screen[x,y,0]:=10;
+                end;//--------------------
+
+
+             if Npointer=3 then
+                begin//--------------------
+                r:=16+j/j1*16;
+                a:=Pi/2*(j mod 4);   //angle
+                x:=DscrX div 2+round(cos(a)*r);
+                y:=DscrY div 2+round(sin(a)*r);
+                if (x>=1) and (x<=DscrX) and (y>=1) and (y<=DscrY) then
+                   Screen[x,y,0]:=10;
+                end;//--------------------
+
+
+             end;
+
+
+
+if BpictureMode then
+   for i:=1 to 127 do
+      Screen[random(DscrX)+1,random(DscrY)+1,0]:=0;
+
+
+ // ---------- Stampa mappa ----------
+
+
+   Graf;
+
+   //effetto sfumato                                                            #OptiFined
+for i1:=1 to 4 do
+   for j1:=1 to 4 do
+      for i:=1 to DscrX div 4 do
+         for j:=1 to DscrY div 4 do
+            if Screen[i*4-i1+1,j*4-j1+1,0]<>Screen[i*4-i1+1,j*4-j1+1,1] then
+               putpixel(i*4-i1+1,j*4-j1+1,Screen[i*4-i1+1,j*4-j1+1,0]);
+
+
+ // ---------- Stampa su console ----------
+
+
+
+if worldName<>'' then
+   begin
+   textcolor(7);
+   if takeTime(2,1) then
+      begin
+      gotoxy(ConsoleScr-3,2);
+      write((T-frametime):1:3);
+      gotoxy(ConsoleScr-3,3);
+      write((T0):1:3);
+      frameTime:=T;
+
+      i:=Nalive;
+      gotoxy(2,3);
+      if i=D then textcolor(12);
+      write(i);
+
+      end;
+   end;
+
+
+if worldName<>'' then
+   begin
+   centra('    ('+st(round(sx))+','+st(round(sy))+')    ',1,15);
+   gotoxy(5,1);
+   textcolor(10);
+   write(accorcia(st(zoom)));
+   textcolor(15);
+   write('X  ');
+   end
+   else
+   begin
+   centra('                ',1,15);
+   gotoxy(5,1);
+   write('      ');
+   end;
+
+
+ // frame
+if worldName<>'' then
+   begin
+   frame:=frame+1;
+   if TakeTime(3,1) then     //scatta il secondo
+      begin
+      gotoxy(ConsoleScr-3,1);
+      textcolor(15);
+      if frame<30 then textcolor(11);
+      if frame<20 then textcolor(10);
+      if frame<15 then textcolor(14);
+      if frame<10 then textcolor(12);
+      if frame< 5 then textcolor( 4);
+      if frame<=1 then textcolor( 0);
+      write(frame,' ');
+      frame:=0;
+      end;
+   end;
+
+
+for i:=1 to DscrX do
+    for j:=1 to DscrY do
+       if Screen[i,j,1]<>Screen[i,j,0] then
+          Screen[i,j,1]:=Screen[i,j,0];
+
+
+
+textcolor(7);
+
+
+end;
+
+
+
+ //schermata di aiuto           wip...
+procedure HelpBase;
+begin
+
+
+clrscr;
+
+centra('Impulse help!',4,11);
+centra('Impulse help!',5,3);
+
+                  centra('   << Basic Impulse tutorial >> ',7,14);
+
+gotoxy(1,8);
+writeln;
+writeln;
+writeln('   You can find Impulse dir in '+percorso+'Impulse');
+writeln;
+writeln('   < moove >  for other help lists');
+writeln;
+writeln;
+
+
+writeln;
+textcolor(15);
+writeln('  1) Crea un nuovo mondo');
+writeln;
+write('  2) Crea una particella con ');
+textcolor(11);
+writeln('\+');
+writeln;
+textcolor(15);
+write('  3) Ora prova a muoverti nel mondo con');
+textcolor(12);
+write(' W A S D ');
+textcolor(15);
+write('e a zoommare con');
+textcolor(12);
+writeln(' < > ');
+textcolor(15);
+writeln;
+write('  4) Torna alla tua particella con ');
+textcolor(11);
+writeln('\-> n');
+textcolor(15);
+writeln;
+write('  5) Crea una particella di colore blu e di fazione 3 con ');
+textcolor(11);
+writeln('\+ c=1 s=3');
+textcolor(15);
+writeln;
+write('  6) Ora spostati e crea una particella che vada dalla piu'' vicina con ');
+textcolor(11);
+writeln('\+ ''{goto(n)}''');
+textcolor(15);
+writeln;
+writeln('  7) Gioca con le impostazioni del mondo, tra cui gravità e textures!');
+writeln;
+textcolor(14);
+write('  8) Ricordati di SALVARE se opportuno!!! ');
+writeln;
+
+
+
+
+gotoxy(1,1);
+repeat until keypressed;
+clrscr;
+
+end;
+
+
+
+ //schermata di aiuto           wip...
+procedure HelpCons;
+begin
+
+
+clrscr;
+
+centra('Impulse help!',4,11);
+centra('Impulse help!',5,3);
+
+                  centra('   << Console command list >> ',7,14);
+
+gotoxy(1,8);
+writeln;
+writeln;
+writeln('   You can find Impulse dir in '+percorso+'Impulse');
+writeln;
+write('   Press "');
+textcolor(11);
+write('\');
+textcolor(15);
+write('" to write a command');
+writeln;
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' spawn a new particle');
+writeln;
+textcolor(15);
+writeln('   \+');
+writeln('   \+ (x,y) [vetX,vetY] ''{comm1}{comm2}'' s=side c=color');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' goto nearest ptc / baricenter / coo / relative coo');
+writeln;
+textcolor(15);
+writeln('   \-> n');
+writeln('   \-> b');
+writeln('   \-> (x,y)');
+writeln('   \-> (@x,@y)');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' set zoom');
+writeln;
+textcolor(15);
+writeln('   \zoom 0.5');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' select nearest / All / Unselect / Invert particles');
+writeln;
+textcolor(15);
+writeln('   \n');
+writeln('   \A');
+writeln('   \U');
+writeln('   \I');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Add commands to all selected');
+writeln;
+textcolor(15);
+writeln('   \* {}');
+writeln('   \* {goto(n)}{!side(1)}');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' clear particle''s commands');
+writeln;
+textcolor(15);
+writeln('   \-');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Delete all particles');
+writeln;
+textcolor(15);
+writeln('   \clear');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' execute sequence of commands saved in the path ( "'+percorso+'\Impulse\InPut.txt" if not specified, ');
+writeln;
+textcolor(15);
+writeln('   \exe');
+writeln('   \exe "C:\ ... \Lib\World.txt"');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' show particle distribution GRAPH ( 1 --> 100 , 1 = nearest , 100 = farest , 0% = void , 100% = highest density)');
+writeln;
+textcolor(15);
+writeln('   \graf');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' follow nearest particle');
+writeln;
+textcolor(15);
+writeln('   \follow on');
+writeln('   \follow off');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' report vectors / coo / alive ptc / commands in '+percorso+'Impulse\report');
+writeln;
+textcolor(15);
+writeln('   \report vet');
+writeln('   \report coo');
+writeln('   \report ptc');
+writeln('   \report com');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' report graf data in "'+percorso+'"');
+writeln;
+textcolor(15);
+writeln('   \report graf');
+writeln;
+
+
+{
+writeln;
+textcolor(11);
+writeln(' ');
+writeln;
+textcolor(15);
+writeln('   \');
+writeln;
+}
+
+
+gotoxy(1,1);
+repeat until keypressed;
+clrscr;
+
+end;
+
+
+
+ //schermata di aiuto           wip...
+procedure HelpUser;
+begin
+
+
+clrscr;
+
+centra('Impulse help!',4,11);
+centra('Impulse help!',5,3);
+
+                  centra('   << User command list >> ',7,14);
+
+gotoxy(1,10);
+textcolor(15);
+writeln('  Alcuni comandi sono eseguibili solo in pausa');
+writeln;
+
+
+writeln;
+textcolor(11);
+writeln(' moove');
+writeln;
+textcolor(14);
+writeln('   W  A  S  D');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' zoom');
+writeln;
+textcolor(14);
+writeln('   <  >');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' rectangular / circular selection  ( . for first coo, . for the other )');
+writeln;
+textcolor(14);
+writeln('   .');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' colored trail');
+writeln;
+textcolor(14);
+writeln('   p');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' delete selected');
+writeln;
+textcolor(14);
+writeln('   x  X');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Show factions');
+writeln;
+textcolor(14);
+writeln('   f  F');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Show vectors');
+writeln;
+textcolor(14);
+writeln('   v  V');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Show coo');
+writeln;
+textcolor(14);
+writeln('   c  C');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Show alive ptc');
+writeln;
+textcolor(14);
+writeln('   b  B');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Show ptc commands memorized');
+writeln;
+textcolor(14);
+writeln('   m  M');
+writeln;
+
+writeln;
+textcolor(11);
+writeln(' Help for user (use  < >  to moove');
+writeln;
+textcolor(14);
+writeln('   h');
+writeln;
+
+
+
+
+
+gotoxy(1,1);
+repeat until keypressed;
+clrscr;
+
+end;
+
+
+
+
+ //schermata di aiuto           wip...
+procedure HelpPart;
+begin
+
+
+clrscr;
+
+centra('Impulse help!',4,11);
+centra('Impulse help!',5,3);
+
+                  centra('   << Particle command list >> ',7,14);
+
+gotoxy(1,10);
+writeln;
+writeln;
+writeln('   A particle command is the command that a particle must execute');
+writeln;
+writeln('   ptc = particle');
+writeln;
+writeln('   use "!" before a command to order to an other ptc     {!side(1)}');
+writeln;
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  The ptc has to go to the nearest (of that side, in that radius)');
+writeln;
+textcolor(11);
+writeln('   {clone}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  The particle has to follow the target until an other order');
+writeln;
+textcolor(11);
+writeln('   {follow(n)}');
+writeln('   {follow(n)[2]}');
+writeln('   {follow(n)[-2]}');
+writeln('   {follow(n)[1] r=10 }');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  The ptc has to escape from the target until on other order');
+writeln;
+textcolor(11);
+writeln('   {escape(n)}');
+writeln('   {escape(n)[2]}');
+writeln('   {escape(n)[-2]}');
+writeln('   {escape(n)[1] r=10 }');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  clone that ptc');
+writeln;
+textcolor(11);
+writeln('   {escape(n)}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  repeat commands form arg_1 to arg_2');
+writeln;
+textcolor(11);
+writeln('   {repeat(1,3)}');
+writeln('   {repeat(1,3)}{goto(n)}{side(1)}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  kill the target (can selfkill)');
+writeln;
+textcolor(11);
+writeln('   {kill}');
+writeln('   {kill(n) r=2 }');
+writeln('   {kill(n)[1] r=2 }');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  change side of the target');
+writeln;
+textcolor(11);
+writeln('   {side(1)}');
+writeln('   {!side(1)}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  random moovement');
+writeln;
+textcolor(11);
+writeln('   {random}');
+writeln('   {random(10)}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  copy command of nearest particle');
+writeln;
+textcolor(11);
+writeln('   {copy(n)}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  paste command to another ');
+writeln;
+textcolor(11);
+writeln('   {paste(n)}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  stop the particle there');
+writeln;
+textcolor(11);
+writeln('   {stop}');
+writeln;
+                   
+writeln;
+textcolor(15);
+writeln('  particle pulses ( on -> off ,off -> on');
+writeln;
+textcolor(11);
+writeln('   {pulse}');
+writeln;
+
+writeln;
+textcolor(15);
+writeln('  particle pulses ( on -> off ,off -> on');
+writeln;
+textcolor(11);
+writeln('   {impulse}');
+writeln('   {impulse[1] r=2 }');
+writeln;
+
+
+
+
+gotoxy(1,1);
+repeat until keypressed;
+clrscr;
+
+end;
+
+
+
+ //schermata di aiuto           wip...
+procedure HelpFAQ;
+begin
+
+
+clrscr;
+
+centra('Impulse help!',4,11);
+centra('Impulse help!',5,3);
+
+                  centra('   << Frequently asked questions >> ',7,14);
+
+
+gotoxy(1,10);
+
+
+writeln;
+textcolor(11);
+writeln('ScreenShots...?');
+writeln;
+textcolor(15);
+writeln('E'' possibile fare la cattura dello schermo premendo "q". I dati vengono salvati e si possono visualizzare nal menu Home.');
+writeln;
+writeln;
+
+writeln;
+textcolor(11);
+writeln('Cos''e'' un txt-exe?');
+writeln;
+textcolor(15);
+writeln('E'' un file txt che contiene al suo interno comandi che Impulse e'' in grado di leggere ed eseguire. Con il comando \exe viene eseguito '+percorso+'\Impulse\InPut.txt , il suo utilizzo e'' consigliato!');
+writeln;
+writeln;
+
+writeln;
+textcolor(11);
+writeln('Come si esegue un txt-exe generico?');
+writeln;
+textcolor(15);
+writeln('I file di testo che contengono comandi, e che verranno eseguiti da Impulse, vengono eseguiti con il comando \exe "perc." . Il percorso si ottiene facilmente trascinando il file direttamente sulla console.');
+writeln;
+writeln;
+
+writeln;
+textcolor(11);
+writeln('Come si commenta un mondo?');
+writeln;
+textcolor(15);
+writeln('Premendo "Tab" nella lista mondi');
+writeln;
+writeln;
+
+writeln;
+textcolor(11);
+writeln('Come si carica un mondo esterno?');
+writeln;
+textcolor(15);
+writeln('Una volta spostata la cartella all''interno di "'+percorso+'\Impulse\saves" basta creare un nuovo mondo con lo stesso nome.');
+writeln;
+writeln;
+
+
+{
+writeln;
+textcolor(11);
+writeln('?');
+writeln;
+textcolor(15);
+writeln('!');
+writeln;
+writeln;
+}
+
+gotoxy(1,1);
+repeat until keypressed;
+clrscr;
+
+end;
+
+
+
+ //gestisce schermate di help        ( base / cons / user / part )
+procedure Help;
+var
+   c:char;
+begin
+
+helpType:=1;
+clrscr;
+c:='<';
+
+repeat
+if c='>' then helpType:=helpType+1;
+if c='<' then helpType:=helpType-1;
+if c=(chr(77)) then helpType:=helpType+1;
+if c=(chr(75)) then helpType:=helpType-1;
+if c=(chr(72)) then helpType:=helpType+1;
+if c=(chr(80)) then helpType:=helpType-1;
+helpType:=regola(helpType,0,4);
+case helpType of
+   0: HelpBase;
+   1: HelpCons;
+   2: HelpUser;
+   3: HelpPart;
+   4: HelpFAQ;
+   end;
+c:=readkey;
+until
+(c<>'<') and (c<>'>') and (c<>chr(72)) and (c<>chr(75)) and (c<>chr(77)) and (c<>chr(80)) and (c<>chr(0));
+
+
+end;
+
+
+
+
+//elimina screenshot
+procedure dltScreenShot(name:shortstring);
+begin
+dltFile('screenshots\'+name);
+refreshShotsList;
+end;
+
+
+
+ //stampa screenShot su schermo
+procedure ViewShot(name:shortstring);
+var
+   x0,y0,n,m,p:integer;
+   x,y:real;
+   line:string;
+begin
+
+
+clrScreen(0);
+
+VetReSet;
+
+Npointer:=0;
+
+x0:=trunc(FileVal('screenshots\'+name,'SizeX'));
+y0:=trunc(FileVal('screenshots\'+name,'SizeY'));
+if FileVal('screenshots\'+name,'zoom')>0 then
+   zoom:=FileVal('screenshots\'+name,'zoom');
+if x0>DscrX then x0:=DscrX;
+if y0>DscrY then y0:=DscrY;
+
+if x0*y0=0 then goto NoShot;
+
+if x0*y0>0 then
+   begin
+
+   Ntexture:=round(FileVal('screenshots\'+name,'texture'));
+   sx:=FileVal('screenshots\'+name,'sX');
+   sy:=FileVal('screenshots\'+name,'sY');
+
+   n:=trunc(FileVal('screenshots\'+name,'n'));
+
+   assign(fl,percorso+'Impulse\screenshots\'+name+'.txt');
+   reset(fl);
+
+   if n>0 then
+   while not eof(fl) do
+      begin
+
+      if keypressed then
+         begin
+         Ccom:=readkey;
+         goto skipShot;
+         end;
+
+      readln(fl,line);
+      line:=line+'§';
+
+      if line[1]='(' then
+         begin
+
+         x:=nm(cut(line,'(',','));
+         y:=nm(cut(line,',',')'));
+         p:=trunc(nm(cut(line,')','§')));
+
+         m:=nextfree;
+         set0( m , 0 , x , y , 0 , 0 , 1 , '' , p , p);
+
+         end;
+
+      end;
+
+   Show;
+
+   end;
+
+close(fl);
+
+gotoxy(1,7);
+clreol;
+
+clrScreen(0);
+
+VetReSet;
+
+
+NoShot:
+
+Npointer:=trunc(fileVal('global\pointer','pointer'));
+
+
+end;
+
+
+
+ //visualizza screenshots
+procedure ViewScreenShots;
+var
+  n,m:integer;
+  name:string;
+begin
+
+if fileVal('screenshots\+ScreenShotList','n')=0 then goto gotoHome;
+
+clrscr;
+n:=1;
+m:=trunc(fileVal('screenshots\+ScreenShotList','n'));
+Ccom:=chr(0);
+
+while true do
+   begin
+
+   clearDevice;
+
+   gotoxy(1,7);
+   clreol;
+   name:=fileStr('screenshots\+ScreenShotList',st(n));
+   centra(' '+name+' ',7,15);
+
+   clearDevice;
+   ViewShot(name);
+
+   centra(' '+name+' ',7,15);
+
+   repeat Ccom:=readkey until ord(Ccom)>0;       //command
+
+   if ord(Ccom)=27 then goto gotoHome;
+
+   if ord(Ccom)=72 then n:=n+1;
+   if ord(Ccom)=75 then n:=n-1;
+   if ord(Ccom)=77 then n:=n+1;
+   if ord(Ccom)=80 then n:=n-1;
+   if n<1 then n:=m;
+   if n>m then n:=1;
+
+   if (Ccom='x') or (Ccom='X') then
+      begin
+      centra('Want to delete this screenshot?',6,12);
+      Ccom:=readkey;
+      if ord(Ccom)=13 then
+         begin
+         dltScreenShot(name);
+         m:=trunc(fileVal('screenshots\+ScreenShotList','n'));
+         end;
+      centra('                               ',6,15);
+      end;
+
+   end;
+
+readln;
+goto gotoHome;
+end;
+
+
+
+ //shot iniziale
+procedure FirstShot;
+var
+   i:integer;
+begin
+
+
+// write impulse 1
+setTextStyle(0,0,5);
+setColor(0);
+OutTextXY(DscrX div 2 -140 -2,DscrY div 2 -20 -2,'Impulse');
+setColor(12);
+OutTextXY(DscrX div 2 -140 -1,DscrY div 2 -20 +2,'Impulse');
+setColor(14);
+OutTextXY(DscrX div 2 -140 +2,DscrY div 2 -20 -1,'Impulse');
+setColor(9);
+OutTextXY(DscrX div 2 -140 +2,DscrY div 2 -20 +2,'Impulse');
+setColor(15);
+OutTextXY(DscrX div 2 -140,DscrY div 2 -20,'Impulse');
+
+settextstyle(0,0,1);
+setColor(7);
+OutTextXY(16,DscrY-16,unfill(cut(version,'=',' ')));
+
+i:=275;
+
+case random(32) of
+0: begin
+   setColor(11);
+   OutTextXY(DscrX -i,DscrY-16,'              Developed by Omega!');
+   setColor(7);
+   end;
+01: OutTextXY(DscrX -i,DscrY-16,'     Prova \exe e \exe "perc." !');
+02: OutTextXY(DscrX -i,DscrY-16,'    Dai un''occhiata alla guida!');
+03: OutTextXY(DscrX -i,DscrY-16,'              Prova le librerie!');
+04: OutTextXY(DscrX -i,DscrY-16,'  Give an impulse to the matter!');
+05: OutTextXY(DscrX -i,DscrY-16,'   Guarda la guida in "Options"!');
+06: OutTextXY(DscrX -i,DscrY-16,'            Raccogli la console!');
+07: OutTextXY(DscrX -i,DscrY-16,'Warn.: Uncontrolled replication!');
+08: OutTextXY(DscrX -i,DscrY-16,'           Warning: Antibiotics!');
+09: OutTextXY(DscrX -i,DscrY-16,'         Warning: Impulse wires!');
+10: OutTextXY(DscrX -i,DscrY-16,' Warning: Exponential infection!');
+11: OutTextXY(DscrX -i,DscrY-16,'        Salva prima di uscire!!!');
+12: OutTextXY(DscrX -i,DscrY-16,'            Usa '+chr(30)+' '+chr(31)+' per muoverti!');
+13: OutTextXY(DscrX -i,DscrY-16,'Usa WASD per muoverti nel mondo!');
+14: OutTextXY(DscrX -i,DscrY-16,'         Fai qualche screenShot!');
+15: OutTextXY(DscrX -i,DscrY-16,'            Finally out of beta!');
+16: OutTextXY(DscrX -i,DscrY-16,'              Use ALL libraries!');
+17: OutTextXY(DscrX -i,DscrY-16,'               Try ALL textures!');
+18: OutTextXY(DscrX -i,DscrY-16,'                   '+st(90+random(9))+'% bug free!');
+19: OutTextXY(DscrX -i,DscrY-16,'                           Life!');
+20: OutTextXY(DscrX -i,DscrY-16,'                     It''s free!');
+21: OutTextXY(DscrX -i,DscrY-16,'                Now on Facebook!');
+22: OutTextXY(DscrX -i,DscrY-16,'            Place ALL particles!');
+23: OutTextXY(DscrX -i,DscrY-16,'                          \exe !');
+24: OutTextXY(DscrX -i,DscrY-16,'                         \graf !');
+25: OutTextXY(DscrX -i,DscrY-16,'                         \-> n !');
+26: OutTextXY(DscrX -i,DscrY-16,'                         \-> b !');
+27: OutTextXY(DscrX -i,DscrY-16,'                     \+ n='+st(D)+' !');
+28: OutTextXY(DscrX -i,DscrY-16,'                        \clear !');
+29: OutTextXY(DscrX -i,DscrY-16,'               Try old versions!');
+30: OutTextXY(DscrX -i,DscrY-16,'                          '+st(random(10))+st(random(10))+st(random(10))+st(random(10))+st(random(10))+'!');
+31: OutTextXY(DscrX -i,DscrY-16,'                          '+chr(random(223)+32)+chr(random(223)+32)+chr(random(223)+32)+chr(random(223)+32)+chr(random(223)+32)+'!');
+32: begin
+    setColor(random(15)+1);
+    OutTextXY(DscrX -i,DscrY-16,'                     Colormatic!');
+    setColor(7);
+    end;
+
+end;
+
+
+if fileVal('screenshots\+ScreenShotList','n')>0 then
+   begin
+
+   i:=0;
+
+   repeat
+      begin
+      if keypressed then
+         begin
+         Ccom:=readkey;
+         goto skipShot;
+         end;
+
+      i:=trunc(FileVal('screenshots\+ScreenShotList','n'));
+      i:=random(i)+1;
+                                  
+      end
+   until
+   fileVal('screenshots\'+fileStr('screenshots\+ScreenShotList',st(i)),'n')>0;
+
+   //clearDevice;        keep it!
+   ViewShot(FileStr('screenshots\+ScreenShotList',st(i)));
+   end;
+
+skipShot:
+
+//write Impulse 2
+setTextStyle(0,0,5);
+setColor(15);
+OutTextXY(DscrX div 2 -140,DscrY div 2 -20,'Impulse');
+
+end;
+
+
+
+ //menu lista mondi
+procedure LoadingMenu;
+const
+   Max=1024;        //numero tot opzioni
+ //  Nlist=5;
+var
+   O,i,j,line:integer;
+   C:char;
+   continua:boolean;
+   stri:shortstring;
+   Tab:array[1..Max]of shortstring;    //remember to refresh!
+   TabC:array[1..Max]of shortstring;    
+begin
+
+
+   //settaggi --------
+
+clrscr;
+line:=Max+1;   //1=default, if 0 then OK
+
+continua:=true;
+C:=' ';
+
+
+   //cornice --------
+
+textcolor(15);
+
+stri:=chr(201);
+for i:=1 to 16 do stri:=stri+chr(205);
+stri:=stri+chr(187);
+centra(stri,8,7);
+
+stri:=chr(200);
+for i:=1 to 16 do stri:=stri+chr(205);
+stri:=stri+chr(188);
+centra(stri,20,7);
+
+
+   //aggiungi opzioni alla lista impostazioni --------
+
+for i:=1 to Max do Tab[i]:='';
+for i:=1 to Max do TabC[i]:='';
+
+for O:=1 to trunc(fileVal('worlds','n')) do
+   if FileStr('worlds',st(O))<>'' then
+      begin
+      Tab[O]:=unFill(FileStr('worlds',st(O)));
+      end;
+
+repeat line:=line-1 until Tab[line]<>'';
+
+   //titolo -------
+
+centra('Impulse - life developement',4,11);
+centra('Impulse - life developement',5,3);
+
+
+while continua do
+   begin //ciclo
+
+
+      //stampa frammento di ciclo su cunsole -------
+
+   if line<1 then line:=line+Max;
+   if line>Max then line:=line-Max;
+
+
+   //find a non empty space
+
+   if (Tab[line]='') and (ord(C)=80) then
+      repeat
+      line:=line+1;
+      if line>Max then line:=line-Max;
+      until
+      Tab[line]<>'';
+
+   if (Tab[line]='') and (ord(C)=72) then
+      repeat
+      line:=line-1;
+      if line<1 then line:=line+Max;
+      until
+      Tab[line]<>'';
+
+   //0
+   TabC[line]:=unFill(FileStr('saves\'+Tab[line]+'\comment','comment'));
+   if length(TabC[line])>0 then
+      centra('        '+TabC[line]+'        ',7,11)
+      else
+      begin
+      centra('                ',7,11);
+      gotoxy(1,7);
+      clreol;
+      end;
+
+   centra('          '+chr(174)+' '+Tab[line]+' '+chr(175)+'          ',14,14);
+
+   //+
+   j:=line;
+      repeat
+      j:=j+1;
+      if j>Max then j:=j-Max;
+      until
+      Tab[j]<>'';
+   centra('         '+Tab[j]+'         ',16,15);
+
+   //++
+      repeat
+      j:=j+1;
+      if j>Max then j:=j-Max;
+      until
+      Tab[j]<>'';
+   centra('         '+Tab[j]+'         ',18,15);
+
+   //-
+   j:=line;
+      repeat
+      j:=j-1;
+      if j<1 then j:=j+Max;
+      until
+      Tab[j]<>'';
+   centra('         '+Tab[j]+'         ',12,15);
+
+   //--
+   repeat
+   j:=j-1;
+   if j<1 then j:=j+Max;
+   until
+   Tab[j]<>'';
+   centra('         '+Tab[j]+'         ',10,15);
+
+
+   C:=readkey;   //leggi
+
+
+        //comandi in pausa -------
+
+
+     // vai a play
+     if ord(C)=13 then
+        begin
+        WorldName:=Tab[line];
+        continua:=false;
+        end;
+
+     if ord(C)=27 then goto gotoHome;
+
+     if (ord(C)=8) or (C='x') or (C='X') then deleteWorld(Tab[line]);
+
+     if ord(C)=9 then commentWorld(Tab[line]);
+
+     if C=chr(72) then
+         begin
+         line:=line-1;
+         if line<1 then line:=Max;
+         end;
+
+     if C=chr(80) then
+         begin
+         line:=line+1;
+         if line>Max then line:=1;
+         end;
+
+     if C='-' then clearDevice;
+
+
+     end;//ciclo
+
+
+clrscr;
+clearDevice;
+clrScreen(0);
+
+
+end;
+
+
+
+ //menu Options
+procedure OptionsMenu;
+const L=5;
+var
+   line,i,O:integer;
+   w:array[1..L]of shortstring;
+   C:char;
+begin
+
+clrscr;
+
+line:=1;
+
+centra('Impulse - help & settings',4,11);
+centra('Impulse - help & settings',5,3);
+
+O:=1;
+w[O]:='Help! - Impulse How-To-Use';
+O:=O+1;
+w[O]:='Pixels = X'+st(fileVal('global\PtcPX','ParticlePX'));
+O:=O+1;
+w[O]:='Size X = '+st(fileVal('global\SizeX','SizeX'));
+O:=O+1;
+w[O]:='Size Y = '+st(fileVal('global\SizeY','SizeY'));
+O:=O+1;
+w[O]:='path = '+percorso;
+
+gotoxy(8,10);
+textcolor(14);
+write(chr(16)+'  '+w[1]);
+textcolor(15);
+for i:=2 to L do
+    begin
+    gotoxy(8,i*2+8);
+    write(w[i]);
+    end;
+
+C:=chr(0);
+while ord(C)<>27 do
+   begin
+
+   if ord(C)=13 then
+      begin
+
+      if line=1 then
+         begin
+         Help;
+         OptionsMenu;
+         end;
+
+      if line=2 then
+         begin
+         gotoxy(8,line*2+8);
+         clreol;
+         cursoron;
+         repeat
+            clreol;
+            ParticlePX:=trunc(nm(readHere))
+         until
+            ParticlePX>0;
+         RewriteFile('global\PtcPX');
+         AppendFile('global\PtcPX','ParticlePX='+st(ParticlePX));
+         cursoroff;
+         gotoxy(8,line*2+8);
+         clreol;
+         w[line]:='Pixels = X'+st(ParticlePX);
+         write(w[line]);
+         end;
+
+      if line=3 then
+         begin
+         gotoxy(8,line*2+8);
+         clreol;
+         cursoron;
+         readln(Scom);
+         if nm(Scom)<=0 then
+            DscrX:=getMaxX
+            else
+            DscrX:=trunc(nm(Scom));
+         rewriteFile('global\SizeX');
+         AppendFile('global\SizeX','SizeX='+st(DscrX));
+         cursoroff;
+         gotoxy(8,line*2+8);
+         clreol;
+         w[line]:='Size X = '+st(DscrX);
+         write(w[line]);
+         end;
+
+      if line=4 then
+         begin
+         gotoxy(8,line*2+8);
+         clreol;
+         cursoron;
+         readln(Scom);
+         if nm(Scom)<=0 then
+            DscrY:=getMaxY
+            else
+            DscrY:=trunc(nm(Scom));
+         rewriteFile('global\SizeY');
+         AppendFile('global\SizeY','SizeY='+st(DscrY));
+         cursoroff;
+         gotoxy(8,line*2+8);
+         clreol;
+         w[line]:='Size Y = '+st(DscrY);
+         write(w[line]);
+         end;
+
+      if line=5 then       //change directory
+         begin
+         gotoxy(8,line*2+8);
+         clreol;
+         cursoron;
+         repeat
+            clreol;
+            percAux:=readHere;
+            if percAux[1]='"' then delete(percAux,1,1);
+            if percAux[length(percAux)]='"' then delete(percAux,length(percAux),1);
+         until
+            (fileExists(percAux)) or (percAux='C:\');  // C:\
+
+         if percAux[length(percAux)]<>'\' then
+            percAux:=percAux+'\';
+         percorso:='C:\';
+         rewriteFile('global\path');
+         AppendFile('global\path','path='+percAux);
+         cursoroff;
+         goto reStartImpulse;
+         end;
+
+      end;
+
+   if (ord(C)=72) or (ord(C)=80) then
+      begin
+      textcolor(15);
+      gotoxy(8,line*2+8);
+      write(w[line]+'   ');
+      end;
+
+   if ord(C)=72 then line:=line-1;
+   if ord(C)=80 then line:=line+1;
+   if line<1 then line:=L;
+   if line>L then line:=1;
+
+   if (ord(C)=72) or (ord(C)=80) then
+      begin
+      gotoxy(8,line*2+8);
+      textcolor(14);
+      write(chr(16)+'  '+w[line]);
+      end;
+
+   C:=readkey;
+
+   end;
+
+textcolor(15);
+
+end;
+
+
+
+ //schermta home menu
+procedure HomeMenu;
+const
+   Max=4;
+var
+   i,line:integer;
+   C:char;
+   w:array[1..Max]of shortstring;
+   sAux:string;
+begin
+
+
+clrScr;
+
+
+centra('Impulse',4,11);
+centra('Impulse',5,3);
+
+//lista Home
+w[1]:='New Game';
+w[2]:='Load Universe';
+w[3]:='Screenshots';
+w[4]:='Options';
+
+for i:=1 to max do
+   centra(w[i],7+i*3,15);
+
+line:=2;
+
+centra(w[line],7+line*3,14);
+
+
+   firstShot;
+
+
+while true do
+   begin
+
+   C:=readkey;
+   delay(2);
+
+   centra(w[line],7+line*3,15);
+
+   case ord(C) of
+
+   80: line:=line+1;
+   72: line:=line-1;
+
+   ord('x'):
+       begin
+       gotoxy(1,1);
+       goto chiudiProgramma;
+       end;
+
+   ord('X'):
+       begin
+       gotoxy(1,1);
+       goto chiudiProgramma;
+       end;
+
+   13: begin                   //actions
+       //1
+       if line=1 then
+          begin
+          clrscr;
+          centra('New  Universe',6,11);
+          centra('_____________',13,7);
+          WorldName:='';
+          C:=' ';
+          centra('',12,15);
+          cursoron;
+                                                               //read world name
+          while (C<>chr(13)) or (length(WorldName)=0) do
+             begin
+             C:=readkey;
+
+             case ord(C) of
+               8: begin
+                  if length(WorldName)>0 then
+                     delete(WorldName,length(WorldName),1);
+                  centra(' '+WorldName+' ',12,15);
+                  end;
+               127: WorldName:='';
+               27: begin
+                   cursorOff;
+                   goto gotoHome;
+                   end;
+               13: C:=chr(13);
+               7: Ccom:=chr(0);
+               9: Ccom:=chr(0);          //non utilizzabili nei nomi!
+               ord('\'): WorldName:=WorldName+'.';
+               ord('/'): WorldName:=WorldName+'.';
+               ord('<'): WorldName:=WorldName+'.';
+               ord('>'): WorldName:=WorldName+'.';
+               ord('"'): WorldName:=WorldName+'.';
+               ord('?'): WorldName:=WorldName+'.';
+               ord(':'): WorldName:=WorldName+'.';
+               ord('*'): WorldName:=WorldName+'.';
+               ord('|'): WorldName:=WorldName+'.';
+               else
+               WorldName:=WorldName+C;
+               end;
+
+             WorldName:=fill(WorldName);
+
+             sAux:='';
+             for i:=1 to length(WorldName) do
+                begin
+                sAux:=sAux+WorldName[i];
+                if WorldName[i]='.' then
+                   begin
+                   gotoxy(1,WhereY);
+                   clreol;
+                   sAux:='';
+                   end;
+                end;
+             WorldName:=sAux;
+
+             centra(WorldName,12,15);
+             if fileStr('saves\'+WorldName+'\data','world')<>'' then
+                centra(WorldName,12,14);
+             end;
+
+          cursoroff;
+          if fileStr('saves\'+WorldName+'\data','world')<>'' then
+             begin
+             clrscr;
+             AppendFile('worlds',st(1+trunc(fileVal('worlds','n')))+'='+WorldName);
+             LoadWorld(WorldName);
+             //goto gotoPlay;
+             end;
+          NewWorld(WorldName);
+          goto gotoPlay;
+          end;
+       //2
+       if (line=2) then
+          if (FileVal('worlds','n')>0) then
+          begin
+          line:=0;
+          refreshWorldList;
+          WorldName:='';
+          LoadingMenu;
+          if WorldName<>'' then
+             begin
+             loadWorld(WorldName);
+             clearDevice;
+             Show;
+             end;
+          goto gotoPlay;
+          end
+          else
+          begin
+          centra('     No saves     ',13,15);
+          delay(500);
+          goto gotoHome;
+          end;
+       //3
+       if line=3 then ViewScreenShots;
+       //4
+       if line=4 then
+          begin
+          OptionsMenu;
+          goto gotoHome;
+          end;
+
+       end;
+
+   end;
+
+   if line<1 then line:=max;
+   if line>max then line:=1;
+
+
+   centra(w[line],7+line*3,14);
+
+   end;
+
+
+end;
+
+
+
+
+ //schermata impostazioni ad mondo avviato
+procedure ImpoMenu;
+const
+   Max=12;        //numero tot opzioni
+var
+   O,i,j,line:integer;
+   C:char;
+   continua:boolean;
+   stri:shortstring;
+   dst:real;
+   Tab:array[1..Max]of shortstring;    //remember to refresh!
+begin
+
+
+clrscr;
+clrScreen(1);    //keep it 1!
+Show;
+
+if BpictureMode then
+   begin
+   BpictureMode:=false;
+   clearDevice;
+   clrScreen(0);
+   Show;
+   end;
+
+
+   //settaggi --------
+
+clrscr;
+line:=1;   //1=default, if 0 then OK
+continua:=true;
+C:=' ';
+
+
+   //titolo -------                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           Prvacina 1
+
+centra('Impulse - life developement',4,11);
+centra('Impulse - life developement',5,3);
+
+centra('working on: '+WorldName,7,15);
+
+
+   //cornice --------
+
+textcolor(15);
+
+stri:=chr(201);
+for i:=1 to 16 do stri:=stri+chr(205);
+stri:=stri+chr(187);
+centra(stri,8,7);
+
+stri:=chr(200);
+for i:=1 to 16 do stri:=stri+chr(205);
+stri:=stri+chr(188);
+centra(stri,20,7);
+
+
+   //altro --------
+
+gotoxy(1,2);
+textcolor(15);
+write(' ',T:1:2);
+textcolor(7);
+gotoxy(ConsoleScr-3,2);
+write((T-frametime):1:3);
+gotoxy(ConsoleScr-3,3);
+write((T0):1:3);
+frameTime:=T;
+
+
+
+                             //aggiungi opzioni alla lista impostazioni --------
+
+for i:=1 to Max do Tab[i]:='';
+
+O:=1;
+     Tab[O]:=' '+chr(16)+' PLAY '+chr(16)+' ';
+
+O:=2;
+     Tab[O]:='SAVE ';
+
+O:=3;
+     Tab[O]:='urti ';
+     if Burti then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+
+O:=4;
+     Tab[O]:='charge ';
+     if Bgravy then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+
+O:=5;
+     Tab[O]:='gravy ';
+     if Bgravy then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+
+O:=6;
+     if Bgravy then
+        Tab[O]:='G = '+st(G)
+        else
+        Tab[O]:='-';
+
+O:=7;
+     Tab[O]:='texture '+st(Ntexture);
+
+O:=8;
+     Tab[O]:='pointer '+st(Npointer);
+
+O:=9;
+     Tab[O]:='no show ';
+     if BnoShowMode then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+
+O:=10;
+     Tab[O]:='attr = '+st(Attrito);
+
+O:=11;
+     Tab[O]:=chr(127)+'T = '+st(T0);
+
+//add here!
+
+O:=Max;
+     Tab[Max]:='QUIT GAME';
+
+
+
+
+
+while continua do
+   begin
+
+
+   Show;  //stampa Graph
+
+
+      //stampa il frammento di ciclo su cunsole -------
+
+   for i:=-2 to 2 do
+       begin
+       j:=line+i;
+       if j<1 then j:=j+Max;
+       if j>Max then j:=j-Max;
+       if i=0 then
+          centra('         '+chr(174)+' '+Tab[j]+' '+chr(175)+'         ',(i)*2+14,14)
+          else
+          centra('         '+Tab[j]+'         ',(i)*2+14,15);
+       end;
+
+
+     repeat
+        C:=readkey;   //leggi
+     until
+        ord(C)>0;
+
+
+        //comandi in pausa -------             w a s d _ < > \ x c v b n m .  l   r   h
+
+
+     // vai a play
+     if C=' ' then line:=1;
+
+
+     //muovi
+     if (C='w') or (C='W') then
+        sy:=sy+128/zoom;
+
+     if (C='a') or (C='A') then
+        sx:=sx-128/zoom;
+
+     if (C='d') or (C='D') then
+        sx:=sx+128/zoom;
+
+     if (C='s') or (C='S') then
+        sy:=sy-128/zoom;
+
+
+     //muovi  con pad numerico
+     if (C='8') then
+        sy:=sy+min(DscrX,DscrY)/(zoom*8);
+
+     if (C='4') then
+        sx:=sx-min(DscrX,DscrY)/(zoom*8);
+
+     if (C='6') then
+        sx:=sx+min(DscrX,DscrY)/(zoom*8);
+
+     if (C='2') then
+        sy:=sy-min(DscrX,DscrY)/(zoom*8);
+
+
+     //zoom
+     if C='>' then
+        begin
+        zoom:=zoom*2;
+        if zoom>1024 then zoom:=1024;
+        end;
+     if C='<' then
+        begin
+        zoom:=zoom/2;
+        end;
+
+
+     //esci
+     if C=chr(8)then
+        goto gotoHome;
+
+
+     //zoom con pad numerico
+     if C='5' then
+        begin
+        zoom:=zoom*2;
+        if zoom>1024 then zoom:=1024;
+        end;
+     if C='0' then
+        begin
+        zoom:=zoom/2;
+        end;
+
+
+     //help
+     if C='h' then
+        begin
+        Help;
+        ImpoMenu;
+        end;
+
+
+     //leggi Scom
+     if C='\' then
+        begin
+        centra('                ',14,14);
+        readScom(14);   //in pausa
+        ExeScom;
+        Show;
+        end;
+
+
+     //gestisci selezione ptc da utente
+     if C='.' then
+        begin
+
+
+        if AreaType='1' then
+           begin
+           Ax2:=sx;
+           Ay2:=sy;
+           AreaType:='2';
+           end
+           else
+           begin
+           Ax1:=sx;
+           Ay1:=sy;
+           Ax2:=sx;
+           Ay2:=sy;
+           AreaType:='1';
+           end;
+
+
+        if AreaType='2' then
+        if (Ax1=Ax2) or (Ay1=Ay2) then
+           begin
+           //circle
+
+           dst:=dist(Ax1,Ay1,Ax2,Ay2);
+           for i:=1 to D do
+              begin
+              if dist(Ax1,Ay1,V[i].cx,V[i].cy)<dst then        ///circ cond
+                 V[i].slc:=not V[i].slc;
+              end;
+
+           end
+           else
+           begin
+
+           if Ax1>Ax2 then
+              begin
+              dst:=Ax1;
+              Ax1:=Ax2;
+              Ax2:=dst;
+              end;
+
+           if Ay1>Ay2 then
+              begin
+              dst:=Ay1;
+              Ay1:=Ay2;
+              Ay2:=dst;
+              end;
+
+           for i:=1 to D do
+              begin
+              if (Ax1<V[i].cx) and (V[i].cx<Ax2) and (Ay1<V[i].cy) and (V[i].cy<Ay2) then                    ///rect cond
+                 V[i].slc:=not V[i].slc;
+              end;
+
+           end;
+
+
+        end;
+
+
+
+     //seleziona la più vicina
+     if C='N' then
+        begin
+        if nearest0(Sx,Sy,0,0)>0 then
+           if V[nearest0(Sx,Sy,0,0)].slc then
+              V[nearest0(Sx,Sy,0,0)].slc:=false
+              else
+              V[nearest0(Sx,Sy,0,0)].slc:=true;
+        end;
+
+     //seleziona la più vicina
+     if C='n' then
+        begin
+        if nearest0(Sx,Sy,0,0)>0 then
+           if dist(Sx,Sy,V[nearest0(Sx,Sy,0,0)].cx,V[nearest0(Sx,Sy,0,0)].cy)<0.5 then
+              if V[nearest0(Sx,Sy,0,0)].slc then
+                 V[nearest0(Sx,Sy,0,0)].slc:=false
+                 else
+                 V[nearest0(Sx,Sy,0,0)].slc:=true;
+        end;
+
+
+     //elimina la cella selezionata
+     if (C='x') or (C='X') then
+        for i:=1 to D do
+           if V[i].slc then kill(i);
+
+
+     //calcola un solo frame
+     if C='+' then
+        begin
+        Physics(T0,G);
+        gotoxy(1,2);
+        textcolor(15);
+        write(' ',T:1:2);
+        end;
+
+
+     //lista note
+     if C='-' then
+        begin
+
+        strData[1]:='';
+
+        clrscr;
+        gotoxy(3,1);
+        centra('Here you can manage strings to add to selected particles',1,15);
+        centra('--------',8,15);
+
+        C:=chr(0);
+        cursoroff;
+        line:=1;
+
+
+        for i:=1 to Smem do
+           begin
+              if strData[i]<>'' then
+              centra(strData[i],i*2+5,15);
+           end;
+
+
+           while ord(C)<>27 do
+                 begin
+
+                 if ord(C)=72 then line:=line-1;
+                 if ord(C)=80 then line:=line+1;
+                 if line<1 then line:=1;
+                 if line>Smem then line:=1;
+
+
+                 if ord(C)=13 then
+                    if strData[line]<>'' then
+                       begin
+                          for i:=1 to D do
+                             if V[i].alive then
+                                if V[i].slc then
+                                V[i].com:=V[i].com+strData[line];
+                      clrscr;
+                      ImpoMenu;
+                      end;
+
+                 if ord(C)=13 then
+                    if strData[line]='' then
+                       begin
+                       centra('',line*2+5,15);
+                       strData[line]:=readHere;
+                       end;
+
+                 centra('<< '+strData[line]+' >>',line*2+5,14);
+                 clreol;
+                 C:=readkey;
+                 centra('   '+strData[line]+'   ',line*2+5,15);
+
+                 end;
+
+      end;
+
+
+     //lista memorie
+     if (C='m') then
+        begin
+        clrscr;
+        writeln('Comandi delle ptc');
+        for i:=1 to D do
+           if V[i].alive then
+           begin
+           if (V[i].com='') or (V[i].com='{}') then
+              textcolor(7)
+              else
+              textcolor(15);
+           writeln(' ',i,')   ',V[i].com);
+           end;
+        readln;
+        ImpoMenu;
+        end;
+
+     //lista ptc attive
+     if (C='b') or (C='B') then
+        begin
+        clrscr;
+        centra('   '+st(NumAlive)+' Alive ptc',2,11);
+        gotoxy(1,4);
+        for i:=1 to D do
+           if V[i].alive then
+              writeln(i);
+        repeat until keypressed;
+        ImpoMenu;
+        end;
+
+     //lista coordinate
+     if (C='c') or (C='C') then
+        begin
+        clrscr;
+        centra('   '+st(NumAlive)+' Alive ptc',2,11);
+        gotoxy(1,4);
+        writeln('Coordinate');
+        for i:=1 to D do 
+           if V[i].alive then
+              writeln(' ',i,')   ( ',(V[i].cx):1:5,' , ',(V[i].cy):1:5,' )');
+        repeat until keypressed;;
+        ImpoMenu;
+        end;
+
+     //lista fazioni
+     if (C='f') or (C='F') then
+        begin
+        showSide;
+        repeat until keypressed;
+        ImpoMenu;
+        end;
+
+     //lista vettori
+     if (C='v') or (C='V') then
+        begin
+        clrscr;
+        centra('   '+st(NumAlive)+' Alive ptc',2,11);
+        gotoxy(1,4);
+        writeln('Vettori');
+        for i:=1 to D do 
+           if V[i].alive then
+              begin
+              if (V[i].vx=0) and (V[i].vy=0) then
+                 textcolor(7)
+                 else
+                 textcolor(15);
+              writeln(' ',i,')   ( ',(V[i].vx):1:5,' , ',(V[i].vy):1:5,' )');
+              end;
+        repeat until keypressed;;
+        ImpoMenu;
+        end;
+
+
+      //stampa --------
+
+
+      if C=chr(72) then
+         begin
+         line:=line-1;
+         if line<1 then line:=Max;
+         end;
+
+      if C=chr(80) then
+         begin
+         line:=line+1;
+         if line>Max then line:=1;
+         end;
+
+
+         //interrompi stampa --------
+
+
+      if ord(C)=27 then    // | Esc |
+         begin
+         continua:=false;
+         pausa:=false;
+         end;
+
+
+      if ord(C)=13 then    // Enter
+         begin
+         end;
+
+
+                                     // gestisci opzioni impostazioni --------
+
+
+O:=1;
+      if (line=O) and (ord(C)=13) then    // > PLAY >
+         begin
+         continua:=false;
+         pausa:=false;
+         end;
+
+O:=2;
+      if (line=O) and (ord(C)=13) then
+         begin
+         SaveWorld(WorldName);
+         centra('World saved',1,14);
+         repeat until keypressed;
+         centra('                ',1,7);
+         end;
+
+O:=3;
+      if (line=O) and ((ord(C)=13) or (ord(C)=75) or (ord(C)=77)) then
+         begin
+         if Burti then Burti:=false else Burti:=true;
+         Tab[O]:='urti ';
+         if Burti then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+         textcolor(15);
+         end;
+
+O:=4;
+      if (line=O) and ((ord(C)=13) or (ord(C)=75) or (ord(C)=77)) then
+         begin
+         Bcharge:=not Bcharge;
+         Tab[O]:='charge ';
+         if Bcharge then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+         end;
+
+O:=5;
+      if (line=O) and ((ord(C)=13) or (ord(C)=75) or (ord(C)=77)) then
+         begin
+         Bgravy:=not Bgravy;
+         Tab[O]:='gravy ';
+         if Bgravy then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+         centra(Tab[O],14,14);
+         if Bgravy then
+             begin
+             centra('G = '+st(G),16,15);
+             Tab[O+1]:='G = '+st(G);
+             end
+             else
+             begin
+             centra('-',16,15);
+             Tab[O+1]:='-';
+             end;
+         end;
+
+O:=6;
+      if (line=O) and (ord(C)=13) then if Bgravy then
+         begin
+         repeat
+         centra('                ',14,15);
+         centra('',14,15);
+         textcolor(14);
+         readln(Tab[line]);
+         val(Tab[line],G,j);
+         Tab[line]:='G = '+Tab[line];
+         centra(Tab[line],14,14);
+         until
+         j=0;
+         textcolor(15);
+         end;
+
+O:=7;
+      if (line=O) and (ord(C)=75) then Ntexture:=Ntexture-1;
+      if (line=O) and (ord(C)=77) then Ntexture:=Ntexture+1;
+      if (line=O) then
+         begin
+         if Ntexture<0 then Ntexture:=7;             //texture number
+         if Ntexture>7 then Ntexture:=0;             //texture number
+         Tab[O]:='texture '+st(Ntexture);
+         centra(Tab[line],14,14);
+         end;
+
+O:=8;
+      if (line=O) and (ord(C)=75) then Npointer:=Npointer-1;
+      if (line=O) and (ord(C)=77) then Npointer:=Npointer+1;
+      if (line=O) then
+         begin
+         if Npointer<0 then Npointer:=3;       //pointer textures
+         if Npointer>3 then Npointer:=0;       //pointer textures
+         Tab[O]:='pointer '+st(Npointer);
+         //save pointer
+         RewriteFile('global\pointer');
+         AppendFile('global\pointer','pointer='+st(Npointer));
+         centra(Tab[line],14,14);
+         clrScreen(1); //uneffective!
+         end;
+
+O:=9;
+      if (line=O) and ((ord(C)=13) or (ord(C)=75) or (ord(C)=77)) then
+         begin
+         if BnoShowMode then BnoShowMode:=false else BnoShowMode:=true;
+         Tab[O]:='no show ';
+         if BnoShowMode then Tab[O]:=Tab[O]+'on' else Tab[O]:=Tab[O]+'off';
+         centra(Tab[line],14,14);
+         end;
+
+O:=10;
+      if (line=O) and (ord(C)=13) then
+         begin
+         repeat
+         centra('                ',14,15);
+         centra('',14,15);
+         textcolor(14);
+         readln(Tab[line]);
+         val(Tab[line],Attrito,j);
+         Tab[line]:='Attr = '+Tab[line];
+         centra(Tab[line],14,14);
+         if Attrito<=0 then j:=1;
+         if Attrito>1 then j:=1;
+         until
+         j=0;
+         textcolor(15);
+         end;
+
+
+O:=11;
+      if (line=O) and (ord(C)=13) then
+         begin
+         repeat
+            centra('                ',14,15);
+            centra('',14,15);
+            textcolor(14);
+            Tab[line]:=readHere;
+            val(Tab[line],T0,j);
+            if j=0 then Tab[line]:=chr(127)+'T = '+Tab[line];
+            if j=1 then T0:=0;
+         until
+            T0>0;
+         textcolor(15);
+         end;
+
+
+//add here!
+
+O:=Max;
+      if line=O then
+         begin                 //quit game
+         centra(Tab[line],14,14);
+         if ord(C)=13 then
+            begin
+            clearDevice;
+            DoGraf:=false;
+            worldName:='';
+            goto gotoHome;
+            end;
+         end;
+
+
+         //fine impo comandi --------
+
+
+      end;
+
+
+clrscr;
+pausa:=false;
+
+
+end;
+
+
+
+
+
+ {### Other ###}
+
+
+ //fai uno screenshot
+procedure ScreenShot;
+var
+   i,n,xx,yy:integer;
+   fl:text;
+   s:string;     //file name
+   stX,stY:string[8];
+begin
+
+
+s:=fill(WorldName)+'  '+Instant;
+s:=fill(s);
+
+AddDir('screenshots\');
+AddFile('screenshots\'+s);
+AddFile('screenshots\+ScreenShotList');
+
+//carica pixel su file
+assign(fl,percorso+'Impulse\screenshots\'+s+'.txt');
+rewrite(fl);
+
+writeln(fl,' '+s);
+writeln(fl,'SizeX='+st(DscrX));
+writeln(fl,'SizeY='+st(DscrY));
+writeln(fl,'sX='+st(sx));
+writeln(fl,'sY='+st(sy));
+writeln(fl,'texture='+st(Ntexture));
+writeln(fl,'zoom='+st(zoom));
+
+
+n:=0;
+for i:=1 to D do
+   if V[i].alive then
+      begin
+
+      xx:=round( ( V[i].cx-sx+DscrX/(2*zoom)) *zoom );  //centro x
+      yy:=round( (-V[i].cy+sy+DscrY/(2*zoom)) *zoom );  //centro y
+
+      stX:=st(V[i].cx);
+      stY:=st(V[i].cy);
+
+      if (xx>=1) and (xx<=DscrX) and (yy>=1) and (yy<=DscrY) then
+         begin
+         writeln(fl,'('+stX+','+stY+')'+st(V[i].col1));               //  (x,y)col
+         n:=n+1;
+         end;
+
+      end;
+
+writeln(fl,'n='+st(n));
+
+close(fl);
+
+i:=trunc(FileVal('screenshots\+ScreenShotList','n'));
+AppendFile('screenshots\+ScreenShotList',st(i+1)+'='+s);
+RefreshShotsList;
+
+
+end;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//------------------------------------------------------------------------------
+
+
+
+
+
+begin //                      {### Main ###}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Omega0
+
+
+
+
+//interface setup
+SetGraph;       //inizializzazione Graph
+SetUp;          //inizializzazione variabili
+
+
+reStartImpulse:
+
+percAux:=fileStr('global\path','path');
+if percAux='' then percAux:='C:\';
+
+
+
+
+
+//         program settings
+SetFiles;
+RefreshWorldList;
+RefreshShotsList;
+if percorso='' then percorso:='C:\';
+
+
+firstReport;  //                   <----  now you can report
+
+
+
+gotoHome:         //    <---  HOME
+
+clearDevice;
+VetReSet;
+
+HomeMenu;
+
+
+
+gotoPlay:         //    <---  PLAY
+
+ImpoMenu;
+Show;
+centra('Impulse - console',4,11);
+centra('Impulse - console',5,3);
+
+
+
+while true do
+      begin// Ciclo ----------------------------------------
+
+      CalcFreq:=CalcFreq+1;  //frame
+
+      TakeCom;// prendi comando
+
+      if (Ccom='q') or (Ccom='Q') then   //Screenshot
+         begin
+         Screenshot;
+         centra('Screenshot taken!',22,14);
+         repeat until keypressed;
+         centra('                 ',22,14);
+         end;
+
+     if pausa then      //metti in pausa
+         begin
+         ImpoMenu;
+         pausa:=false;
+         centra('Impulse - console',4,11);
+         centra('Impulse - console',5,3);
+         Show;
+         end;
+
+     if not pausa then
+        begin
+        T:=T+T0;
+        Physics(T0,G);  //Fisiche
+        end;
+
+     if not BnoShowMode then
+        if not pausa then
+           begin
+           Show;
+           end;
+
+     if BnoShowMode then
+         if Ccom=' ' then
+            Show;
+
+
+     gotoxy(1,2);
+     textcolor(15);
+     write(' ',T:1:2);
+
+     Ccom:=chr(0);
+
+     end; //  Ciclo ----------------------------------------
+
+
+
+chiudiProgramma:
+
+CloseGraph;
+abort;
+
+
+end.   //main end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ {### Note ###}
+
+{
+
+
+www.freepascal.org/docs-html/rtl/system/index-8.html
+http://www.freepascal.org/docs-html/rtl/sysutils/index-5.html
+
+
+ dst = distanza
+ ptc = particella
+ frc = forza
+ vel = velocità
+
+}
+
+
+
+{
+
+timePass
+
+ "#ComVirus1 "
+
+ in memoria:   ComVirus1 = goto(n)...
+
+ "#N "   fixed nearest
+
+
+ target:=nearest( V[i].cx , V[i].cy , strVal(V[i].com,'r') , trunc(nm(cut(V[i].com,'[',']'))) );
+
+
+----- WhatToDo List ------------------------------------------------------------
+
+
+-add other textures
+
+-light speed
+
+
+--------------------------------------------------------------------------------
+
+}
